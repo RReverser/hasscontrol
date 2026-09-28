@@ -56,6 +56,57 @@ module Hass {
     return LIST_ID;
   }
 
+  // ---- connection progress and pairing state ------------------------------
+
+  var _uiShown = false;       // an entity view has been on screen
+  var _linkText = null;       // current connection step, null when idle/ready
+  var _statusLoader = false;  // the loader on screen was put there by us
+
+  // Called by the client on every link state change while a request waits
+  // for the connection; text == null means "done" (ready, idle or failed).
+  function onLinkStatus(text) {
+    _linkText = text;
+    if (!_uiShown) {
+      return;  // shown once the first view is up, see onViewShown()
+    }
+    var vc = App.getApp().viewController;
+    if (text != null) {
+      vc.showLoader(text);
+      _statusLoader = true;
+    } else if (_statusLoader) {
+      _statusLoader = false;
+      vc.removeLoaderImmediate();
+    }
+  }
+
+  // Entity views call this from onShow(). The first call starts pairing when
+  // the app is not paired, or shows the connection step already under way.
+  function onViewShown() {
+    if (_uiShown) {
+      return;
+    }
+    _uiShown = true;
+    client.later(Utils.method(Hass, :_afterFirstShow));
+  }
+
+  function _afterFirstShow(err, data) {
+    if (!App.getApp().isLoggedIn()) {
+      if (client.validateSettings(null) == null) {
+        App.getApp().login();
+      }
+    } else if (_linkText != null) {
+      onLinkStatus(_linkText);
+    }
+  }
+
+  // Logout: drop the cached entity list so the next start shows the
+  // unpaired state rather than stale entries.
+  function clearEntities() {
+    _entities = new [0];
+    App.Storage.deleteValue(STORAGE_KEY);
+    Ui.requestUpdate();
+  }
+
   function getEntities() {
     return _entities;
   }

@@ -27,6 +27,7 @@ module Hass {
   const CONNECT_ATTEMPT_MS = 15000;
   // Experimental: ask for an encrypted, bonded link (LE pairing).
   const BOND = true;
+  const DISCOVERY_WAIT_MS = 8000;
   const BOND_WAIT_MS = 30000;  // user has to confirm the code on the watch
 
   const MSG_CHALLENGE = 0x81;
@@ -48,6 +49,7 @@ module Hass {
     LINK_SCANNING,
     LINK_CONNECTING,
     LINK_BONDING,
+    LINK_DISCOVERING,
     LINK_SUBSCRIBING,
     LINK_HELLO,
     LINK_READY,
@@ -69,6 +71,7 @@ module Hass {
     hidden var _connectStarted = 0;
     hidden var _connectTries = 0;
     hidden var _secureStrategy = false;
+    hidden var _discoveryStarted = 0;
     hidden var _svcUuid;
     hidden var _cmdUuid;
     hidden var _evtUuid;
@@ -83,6 +86,13 @@ module Hass {
 
     function getState() {
       return _state;
+    }
+
+    hidden function _setState(s) {
+      if (s != _state) {
+        _state = s;
+        _listener.onLinkStatus(s);
+      }
     }
 
     function isReady() {
@@ -123,7 +133,7 @@ module Hass {
         _startScan();
         return;
       }
-      _state = LINK_REGISTERING;
+      _setState(LINK_REGISTERING);
       Utils.debugLog("BLE: registering profile", null, null);
       try {
         Ble.registerProfile({
@@ -157,7 +167,7 @@ module Hass {
     }
 
     hidden function _reset(newState) {
-      _state = newState;
+      _setState(newState);
       _device = null;
       _cmd = null;
       _writeQueue = [];
@@ -181,7 +191,7 @@ module Hass {
     }
 
     hidden function _startScan() {
-      _state = LINK_SCANNING;
+      _setState(LINK_SCANNING);
       Utils.debugLog("BLE: scanning", null, null);
       Ble.setScanState(Ble.SCAN_STATE_SCANNING);
     }
@@ -194,6 +204,15 @@ module Hass {
     // cancelled attempts that were about to succeed. The integration now
     // advertises every 60-100 ms to shorten that.
     function checkTimeout(now) {
+      if (_state == LINK_DISCOVERING && _device != null) {
+        if (now - _discoveryStarted > DISCOVERY_WAIT_MS) {
+          Utils.debugLog("BLE: service never listed", null, null);
+          _fail(BleError.BLE_CONNECT_FAILED);
+        } else {
+          _subscribe(_device);
+        }
+        return;
+      }
       if (_state == LINK_BONDING && now - _connectStarted > BOND_WAIT_MS && _device != null) {
         Utils.debugLog("BLE: no encryption status, continuing without bond", null, null);
         _subscribe(_device);
@@ -235,7 +254,7 @@ module Hass {
         for (var u = uuids.next(); u != null; u = uuids.next()) {
           if (u.equals(_svcUuid)) {
             Ble.setScanState(Ble.SCAN_STATE_OFF);
-            _state = LINK_CONNECTING;
+            _setState(LINK_CONNECTING);
             Utils.debugLog("BLE: found HA, rssi=", r.getRssi(), ", connecting");
             _connectStarted = System.getTimer();
             _connectTries += 1;
@@ -285,7 +304,7 @@ module Hass {
       var bonded = (device has :isBonded) ? device.isBonded() : false;
       Utils.debugLog("BLE: bonded=", bonded, " strategy=" + _secureStrategy);
       if (BOND && !bonded && (_secureStrategy || (device has :requestBond))) {
-        _state = LINK_BONDING;
+        _setState(LINK_BONDING);
         _connectStarted = System.getTimer();
         if (!_secureStrategy) {
           Utils.debugLog("BLE: requesting bond", null, null);
@@ -311,11 +330,18 @@ module Hass {
       }
     }
 
+    // The service list can still be empty when a bonded link reports
+    // CONNECTED or encryption completes (seen on a Fenix 7: getService()
+    // returned null both times while HA's service was discovered), so poll
+    // for it from checkTimeout() for up to DISCOVERY_WAIT_MS.
     hidden function _subscribe(device) {
       var svc = device.getService(_svcUuid);
       if (svc == null) {
-        Utils.debugLog("BLE: service not found", null, null);
-        _fail(BleError.BLE_CONNECT_FAILED);
+        if (_state != LINK_DISCOVERING) {
+          Utils.debugLog("BLE: service not listed yet, waiting", null, null);
+          _setState(LINK_DISCOVERING);
+          _discoveryStarted = System.getTimer();
+        }
         return;
       }
       _cmd = svc.getCharacteristic(_cmdUuid);
@@ -326,7 +352,7 @@ module Hass {
         _fail(BleError.BLE_CONNECT_FAILED);
         return;
       }
-      _state = LINK_SUBSCRIBING;
+      _setState(LINK_SUBSCRIBING);
       Utils.debugLog("BLE: subscribing", null, null);
       cccd.requestWrite([0x01, 0x00]b);
     }
@@ -340,7 +366,7 @@ module Hass {
         _fail(BleError.BLE_CONNECT_FAILED);
         return;
       }
-      _state = LINK_HELLO;
+      _setState(LINK_HELLO);
       Utils.debugLog("BLE: subscribed, HELLO", null, null);
       _queueRaw([OP_HELLO, 1]b);
     }
@@ -377,7 +403,7 @@ module Hass {
         }
         _nonce = msg.slice(1, 9);
         _ctr = 0;
-        _state = LINK_READY;
+        _setState(LINK_READY);
         Utils.debugLog("BLE: session ready, entities=", msg[10], null);
         _listener.onLinkReady(msg[10]);
         return;

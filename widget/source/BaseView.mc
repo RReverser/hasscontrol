@@ -10,6 +10,7 @@ class BaseView extends Ui.View {
     }
 
     function onShow() {
+        Hass.onViewShown();
     }
 
     // Load your resources here

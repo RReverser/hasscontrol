@@ -17,6 +17,8 @@ module Hass {
   const REQUEST_TIMEOUT_MS = 10000;
   const CONNECT_TIMEOUT_MS = 25000;
   const TICK_MS = 50;
+  // Set once a session completed a LIST with HA; cleared by logout.
+  const STORAGE_PAIRED = "ble/paired";
 
   class Client {
     static enum {
@@ -68,16 +70,43 @@ module Hass {
       return null;
     }
 
+    // "Logged in" = paired: a secret is configured and a session with HA
+    // completed at least once since the last logout.
     function isLoggedIn() {
-      return validateSettings(null) == null;
+      return validateSettings(null) == null && App.Storage.getValue(STORAGE_PAIRED) == true;
     }
 
     function login(callback) {
       _enqueue({ :k => :login, :cb => callback });
     }
 
+    // Forget the pairing on the watch side. The system keeps its LE bond
+    // keys (Connect IQ has no API to delete them), so this returns the app
+    // to its unpaired start state; HA keeps its side of the bond too.
     function logout() {
+      App.Storage.deleteValue(STORAGE_PAIRED);
       shutdown();
+    }
+
+    // Runs `cb` from the client timer, i.e. outside the current Ui callback.
+    function later(cb) {
+      _defer(cb, null, null);
+      _ensureTick();
+    }
+
+    function onLinkStatus(state) {
+      var text = null;
+      if (!_ready && _ops.size() > 0) {
+        if (state == LINK_REGISTERING || state == LINK_SCANNING) {
+          text = "Searching for\nHome Assistant";
+        } else if (state == LINK_BONDING) {
+          text = "Pairing:\nconfirm the code";
+        } else if (state == LINK_CONNECTING || state == LINK_DISCOVERING
+                   || state == LINK_SUBSCRIBING || state == LINK_HELLO) {
+          text = "Connecting";
+        }
+      }
+      Hass.onLinkStatus(text);
     }
 
     function shutdown() {
@@ -308,6 +337,7 @@ module Hass {
       if (t == MSG_ENTITY) {
         _onEntity(msg);
       } else if (t == MSG_LIST_END) {
+        App.Storage.setValue(STORAGE_PAIRED, true);
         _listing = false;
         _listFresh = true;
         _drain();

@@ -4,6 +4,7 @@
 
     <!-- Entity List -->
     <string id="NoEntities">No entities configured</string>
+    <string id="NotPaired">Not paired.\nMENU &gt; Pair</string>
 
 
 

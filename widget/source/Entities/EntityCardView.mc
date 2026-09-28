@@ -30,7 +30,8 @@ class EntityCardView extends Ui.View {
   }
 
   function onShow() {
-    if (App.Properties.getValue("refresh")) {
+    Hass.onViewShown();
+    if (App.Properties.getValue("refresh") && App.getApp().isLoggedIn()) {
       Hass.refreshAllEntities(true);
     }
   }
@@ -62,7 +63,7 @@ class EntityCardView extends Ui.View {
     );
 
     var font = Graphics.FONT_MEDIUM;
-    var text = Ui.loadResource(Rez.Strings.NoEntities);
+    var text = Ui.loadResource(App.getApp().isLoggedIn() ? Rez.Strings.NoEntities : Rez.Strings.NotPaired);
     text = Graphics.fitTextToArea(text, font, vw * 0.9, vh * 0.9, true);
 
     // Adjust text position for rectangular screens

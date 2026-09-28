@@ -57,12 +57,16 @@ class HassControlApp extends App.AppBase {
 
   function logout() {
     Hass.client.logout();
+    Hass.clearEntities();
   }
 
   function onLoggedIn(error, data) {
     if (error != null) {
       viewController.showError(error);
+      return;
     }
+    // paired: fill the list from the entities HA exposes
+    Hass.importEntities(true);
   }
 
   function login() {
@@ -141,6 +145,11 @@ class HassControlApp extends App.AppBase {
     Hass.initClient();
     Utils.logMem("init:3 client", null);
     Hass.loadStoredEntities();
+    if (!isLoggedIn()) {
+      // unpaired (fresh install, logout, or an upgrade from a build that had
+      // no pairing state): never show a cached list from an older pairing
+      Hass.clearEntities();
+    }
     Utils.logMem("init:4 stored n", Hass.getEntities().size());
     Hass.loadScenesFromSettings();
     Utils.logMem("init:5 scenes n", Hass.getEntities().size());

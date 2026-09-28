@@ -83,7 +83,7 @@ class MenuController {
             ));
         } else {
             menu.addItem(new Ui.MenuItem(
-                "Login",
+                "Pair",
                 "",
                 MenuController.MENU_LOGIN,
                 {}
@@ -112,7 +112,7 @@ class MenuController {
             {}
         ));
         menu.addItem(new Ui.MenuItem(
-            "Logout",
+            "Unpair",
             "",
             MenuController.MENU_LOGOUT,
             {}
