@@ -332,7 +332,7 @@ module Hass {
       }
       var bonded = (device has :isBonded) ? device.isBonded() : false;
       var crashed = App.Storage.getValue(STORAGE_BOND_TRY) == true;
-      Utils.debugLog("BLE: bonded=", bonded, " prevBondCrash=" + crashed);
+      Utils.debugLog("BLE: bonded=", bonded, " bondGuard=" + crashed);
       if (BOND && !bonded && !crashed && (device has :requestBond)) {
         _setState(LINK_BONDING);
         _connectStarted = System.getTimer();
