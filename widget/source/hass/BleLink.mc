@@ -25,6 +25,9 @@ module Hass {
   const OP_BYE = 0x07;
 
   const CONNECT_ATTEMPT_MS = 15000;
+  // Experimental: ask for an encrypted, bonded link (LE pairing).
+  const BOND = true;
+  const BOND_WAIT_MS = 12000;
 
   const MSG_CHALLENGE = 0x81;
   const MSG_ENTITY = 0x82;
@@ -44,6 +47,7 @@ module Hass {
     LINK_REGISTERING,
     LINK_SCANNING,
     LINK_CONNECTING,
+    LINK_BONDING,
     LINK_SUBSCRIBING,
     LINK_HELLO,
     LINK_READY,
@@ -113,6 +117,7 @@ module Hass {
         return;
       }
       Ble.setDelegate(self);
+      _setSecureStrategy();
       if (_profileRegistered) {
         _startScan();
         return;
@@ -188,6 +193,11 @@ module Hass {
     // cancelled attempts that were about to succeed. The integration now
     // advertises every 60-100 ms to shorten that.
     function checkTimeout(now) {
+      if (_state == LINK_BONDING && now - _connectStarted > BOND_WAIT_MS && _device != null) {
+        Utils.debugLog("BLE: no encryption status, continuing unbonded", null, null);
+        _subscribe(_device);
+        return;
+      }
       if (_state == LINK_CONNECTING && now - _connectStarted > CONNECT_ATTEMPT_MS) {
         Utils.debugLog("BLE: connect attempt timed out, rescanning; tries=", _connectTries, null);
         if (_device != null) {
@@ -240,28 +250,21 @@ module Hass {
     }
 
     function onConnectedStateChanged(device, state) {
-      Utils.debugLog("BLE: connected state=", state, null);
+      Utils.debugLog("BLE: connected state=", state, " link=" + _state);
       if (state == Ble.CONNECTION_STATE_CONNECTED) {
-        if (_state != LINK_CONNECTING) {
+        // Besides the connection we asked for, the system reconnects on its
+        // own to a device this app instance has paired (e.g. after HA drops
+        // an idle link). Adopt those too: HA stops advertising while a
+        // central is connected, so scanning for it again would never succeed.
+        if (_state != LINK_CONNECTING && _state != LINK_SCANNING
+            && _state != LINK_IDLE && _state != LINK_FAILED) {
           return;
         }
+        Ble.setScanState(Ble.SCAN_STATE_OFF);
         _device = device;
         Utils.debugLog("BLE: connected after tries=", _connectTries, null);
         _connectTries = 0;
-        var svc = device.getService(_svcUuid);
-        if (svc == null) {
-          _fail(BleError.BLE_CONNECT_FAILED);
-          return;
-        }
-        _cmd = svc.getCharacteristic(_cmdUuid);
-        var evt = svc.getCharacteristic(_evtUuid);
-        var cccd = evt != null ? evt.getDescriptor(Ble.cccdUuid()) : null;
-        if (_cmd == null || cccd == null) {
-          _fail(BleError.BLE_CONNECT_FAILED);
-          return;
-        }
-        _state = LINK_SUBSCRIBING;
-        cccd.requestWrite([0x01, 0x00]b);
+        _secure(device);
       } else if (_state != LINK_IDLE) {
         // HA dropped us (idle timeout) or radio lost: next request reconnects
         _reset(LINK_IDLE);
@@ -269,7 +272,62 @@ module Hass {
       }
     }
 
+    // Asks the system for an encrypted, bonded link when the API allows it
+    // (Device.requestBond, API 3.1+); the answer arrives in onEncryptionStatus.
+    // Unbonded links still work, the protocol authenticates every command.
+    hidden function _secure(device) {
+      if (BOND && (device has :requestBond) && !device.isBonded()) {
+        _state = LINK_BONDING;
+        _connectStarted = System.getTimer();
+        Utils.debugLog("BLE: requesting bond", null, null);
+        try {
+          device.requestBond();
+          return;
+        } catch (e) {
+          Utils.debugLog("BLE: requestBond threw", null, null);
+        }
+      } else if (device has :isBonded) {
+        Utils.debugLog("BLE: bonded=", device.isBonded(), null);
+      }
+      _subscribe(device);
+    }
+
+    function onEncryptionStatus(device, status) {
+      Utils.debugLog("BLE: encryption status=", status, " link=" + _state);
+      if (_state == LINK_BONDING) {
+        _subscribe(device);
+      }
+    }
+
+    hidden function _setSecureStrategy() {
+      if (BOND && (Ble has :setConnectionStrategy) && (Ble has :CONNECTION_STRATEGY_SECURE_PAIR_BOND)) {
+        Ble.setConnectionStrategy(Ble.CONNECTION_STRATEGY_SECURE_PAIR_BOND);
+        Utils.debugLog("BLE: strategy secure pair+bond", null, null);
+      }
+    }
+
+    hidden function _subscribe(device) {
+      var svc = device.getService(_svcUuid);
+      if (svc == null) {
+        Utils.debugLog("BLE: service not found", null, null);
+        _fail(BleError.BLE_CONNECT_FAILED);
+        return;
+      }
+      _cmd = svc.getCharacteristic(_cmdUuid);
+      var evt = svc.getCharacteristic(_evtUuid);
+      var cccd = evt != null ? evt.getDescriptor(Ble.cccdUuid()) : null;
+      if (_cmd == null || cccd == null) {
+        Utils.debugLog("BLE: characteristic missing", null, null);
+        _fail(BleError.BLE_CONNECT_FAILED);
+        return;
+      }
+      _state = LINK_SUBSCRIBING;
+      Utils.debugLog("BLE: subscribing", null, null);
+      cccd.requestWrite([0x01, 0x00]b);
+    }
+
     function onDescriptorWrite(descriptor, status) {
+      Utils.debugLog("BLE: descriptor write status=", status, null);
       if (_state != LINK_SUBSCRIBING) {
         return;
       }

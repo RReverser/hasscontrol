@@ -21,8 +21,8 @@ KEY = bytes(range(16))
 
 
 class FakePeriph:
-    def __init__(self, adapter, on_write, on_device):
-        self.on_write, self.on_device = on_write, on_device
+    def __init__(self, adapter, on_write, on_device, pairing=None):
+        self.on_write, self.on_device, self.pairing = on_write, on_device, pairing
         self.frames, self.disconnected = [], []
 
     async def start(self):
@@ -167,4 +167,19 @@ async def test_idle_disconnect(hass_env):
     server._check_idle(None)
     await hass.async_block_till_done()
     assert server.periph.disconnected == [dev]
+    await hass.async_stop(force=True)
+
+
+@pytest.mark.asyncio
+async def test_pairing_window(hass_env):
+    hass, server, _ = await hass_env()
+    pairing = server.periph.pairing
+    dev = "/org/bluez/hci0/dev_90_F1_57_AB_AA_08"
+    assert await pairing.confirm(dev, 123456, "numeric_comparison") is False
+    server.allow_pairing(60)
+    assert await pairing.confirm(dev, 123456, "numeric_comparison") is True
+    assert await pairing.confirm(dev, None, "just_works") is True
+    server.allow_pairing(0)
+    assert await pairing.confirm(dev, 42, "numeric_comparison") is False
+    await hass.async_block_till_done()
     await hass.async_stop(force=True)

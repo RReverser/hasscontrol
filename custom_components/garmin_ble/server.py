@@ -7,6 +7,7 @@ import time
 from datetime import timedelta
 from dataclasses import dataclass, field
 
+from homeassistant.components import persistent_notification
 from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
@@ -15,8 +16,8 @@ from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_track_state_change_event, async_track_time_interval
 
 from . import protocol as p
-from .const import SIGNAL_BATTERY
-from .peripheral import BlePeripheral
+from .const import DOMAIN, SIGNAL_BATTERY
+from .peripheral import BlePeripheral, PairingHandler
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -65,7 +66,8 @@ class GarminBleServer:
         self._frag = p.Fragmenter()
         self._unsubs: list = []
         self._unsub_state = None
-        self.periph = BlePeripheral(adapter, self._on_write, self._on_device)
+        self._pair_until = 0.0
+        self.periph = BlePeripheral(adapter, self._on_write, self._on_device, _Pairing(self))
 
     # ---- lifecycle -------------------------------------------------------
     async def async_start(self) -> None:
@@ -82,6 +84,16 @@ class GarminBleServer:
         for dev in list(self._conns):
             await self.periph.disconnect(dev)
         await self.periph.stop()
+
+    # ---- pairing -----------------------------------------------------------
+    def allow_pairing(self, seconds: int) -> None:
+        """Accept BLE pairing requests for the next `seconds` (0 closes the window)."""
+        self._pair_until = time.monotonic() + seconds if seconds > 0 else 0.0
+        _LOGGER.info("pairing window %s", f"open for {seconds}s" if seconds > 0 else "closed")
+
+    @property
+    def pairing_open(self) -> bool:
+        return time.monotonic() < self._pair_until
 
     # ---- exposure --------------------------------------------------------
     def _refresh_entities(self) -> None:
@@ -212,3 +224,36 @@ class GarminBleServer:
             _LOGGER.warning("%s.%s on %s failed: %s", domain, service, eid, err)
             return p.ST_SERVICE_ERROR
         return p.ST_OK
+
+
+class _Pairing(PairingHandler):
+    """Pairing policy: accept only while the window opened by the
+    garmin_ble.allow_pairing action is open, and show the 6-digit code as a
+    persistent notification so it can be compared with the watch."""
+
+    def __init__(self, server: GarminBleServer) -> None:
+        self._s = server
+
+    def _notify(self, title: str, message: str) -> None:
+        persistent_notification.async_create(
+            self._s.hass, message, title=title, notification_id=f"{DOMAIN}_pairing")
+
+    async def confirm(self, device: str, passkey: int | None, kind: str) -> bool:
+        ok = self._s.pairing_open
+        code = f"{passkey:06d}" if passkey is not None else "none (Just Works)"
+        _LOGGER.info("pairing request %s from %s, code %s: %s", kind, device, code,
+                     "accepted" if ok else "rejected (window closed)")
+        self._notify("Garmin watch pairing",
+                     f"Method: {kind}\nCode: {code}\nDevice: {device}\n"
+                     + ("Accepted: check that the watch shows the same code." if ok
+                        else "Rejected: run the garmin_ble.allow_pairing action first."))
+        return ok
+
+    def display(self, device: str, passkey: int) -> None:
+        _LOGGER.info("pairing passkey for %s: %06d", device, passkey)
+        self._notify("Garmin watch pairing",
+                     f"Enter this code on the watch: {passkey:06d}\nDevice: {device}")
+
+    def cancel(self) -> None:
+        persistent_notification.async_dismiss(self._s.hass, f"{DOMAIN}_pairing")
+

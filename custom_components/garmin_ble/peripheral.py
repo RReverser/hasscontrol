@@ -10,7 +10,7 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 
-from dbus_fast import BusType, Message, MessageType, Variant
+from dbus_fast import BusType, DBusError, Message, MessageType, Variant
 from dbus_fast.aio import MessageBus
 from dbus_fast.service import PropertyAccess, ServiceInterface, dbus_property, method
 
@@ -24,6 +24,10 @@ ADV_MIN_INTERVAL_MS = 60
 ADV_MAX_INTERVAL_MS = 100
 
 APP_PATH = "/io/hasscontrol/garmin_ble"
+AGENT_PATH = "/io/hasscontrol_agent/agent0"
+# KeyboardDisplay lets the peer pick Numeric Comparison (LE Secure
+# Connections) or Passkey Entry; the watch's own IO capability decides.
+AGENT_CAPABILITY = "KeyboardDisplay"
 ADV_PATH = "/io/hasscontrol_adv/adv0"  # outside APP_PATH: dbus-fast's ObjectManager lists all children
 
 WriteCb = Callable[[str, bytes], Awaitable[None]]
@@ -133,13 +137,87 @@ class _Advertisement(ServiceInterface):
         _LOGGER.debug("advertisement released by BlueZ")
 
 
+class PairingHandler:
+    """What the agent asks the integration. Every method returns True to accept."""
+
+    async def confirm(self, device: str, passkey: int | None, kind: str) -> bool:  # pragma: no cover
+        return False
+
+    def display(self, device: str, passkey: int) -> None:  # pragma: no cover
+        pass
+
+    def cancel(self) -> None:  # pragma: no cover
+        pass
+
+
+class _Agent(ServiceInterface):
+    """org.bluez.Agent1: answers pairing requests from the watch.
+
+    Numeric Comparison -> RequestConfirmation (both sides show the same 6 digits),
+    Passkey Entry where HA displays -> DisplayPasskey, Just Works ->
+    RequestAuthorization. RequestPasskey (HA would have to type the watch's
+    code) is refused: HA has no synchronous input path for it.
+    """
+
+    def __init__(self, handler: PairingHandler) -> None:
+        super().__init__("org.bluez.Agent1")
+        self._h = handler
+
+    @method()
+    def Release(self):  # noqa: N802
+        _LOGGER.debug("agent released")
+
+    @method()
+    def RequestPinCode(self, device: "o") -> "s":  # noqa: N802
+        _LOGGER.info("pairing: RequestPinCode from %s refused (BR/EDR only)", device)
+        raise DBusError("org.bluez.Error.Rejected", "not supported")
+
+    @method()
+    def DisplayPinCode(self, device: "o", pincode: "s"):  # noqa: N802
+        _LOGGER.info("pairing: DisplayPinCode %s %s", device, pincode)
+
+    @method()
+    def RequestPasskey(self, device: "o") -> "u":  # noqa: N802
+        _LOGGER.info("pairing: RequestPasskey from %s (watch displays the code) refused", device)
+        raise DBusError("org.bluez.Error.Rejected", "passkey input not supported")
+
+    @method()
+    def DisplayPasskey(self, device: "o", passkey: "u", entered: "q"):  # noqa: N802
+        _LOGGER.info("pairing: DisplayPasskey %s %06d entered=%d", device, passkey, entered)
+        self._h.display(device, passkey)
+
+    @method()
+    async def RequestConfirmation(self, device: "o", passkey: "u"):  # noqa: N802
+        _LOGGER.info("pairing: RequestConfirmation %s %06d (numeric comparison)", device, passkey)
+        if not await self._h.confirm(device, passkey, "numeric_comparison"):
+            raise DBusError("org.bluez.Error.Rejected", "rejected")
+
+    @method()
+    async def RequestAuthorization(self, device: "o"):  # noqa: N802
+        _LOGGER.info("pairing: RequestAuthorization %s (just works)", device)
+        if not await self._h.confirm(device, None, "just_works"):
+            raise DBusError("org.bluez.Error.Rejected", "rejected")
+
+    @method()
+    def AuthorizeService(self, device: "o", uuid: "s"):  # noqa: N802
+        _LOGGER.debug("pairing: AuthorizeService %s %s", device, uuid)
+
+    @method()
+    def Cancel(self):  # noqa: N802
+        _LOGGER.info("pairing: cancelled by BlueZ")
+        self._h.cancel()
+
+
 class BlePeripheral:
     """Owns one D-Bus connection, the GATT objects and their registration."""
 
-    def __init__(self, adapter: str, on_write: WriteCb, on_device: DeviceCb) -> None:
+    def __init__(self, adapter: str, on_write: WriteCb, on_device: DeviceCb,
+                 pairing: PairingHandler | None = None) -> None:
         self._adapter_path = f"/org/bluez/{adapter}"
         self._on_write = on_write
         self._on_device = on_device
+        self._agent = _Agent(pairing) if pairing is not None else None
+        self._agent_registered = False
         self._bus: MessageBus | None = None
         self._registered = False
         self._tasks: set[asyncio.Task] = set()
@@ -169,6 +247,8 @@ class BlePeripheral:
         for obj in (self._svc, self._cmd, self._evt):
             self._bus.export(obj.path, obj)
         self._bus.export(ADV_PATH, self._adv)
+        if self._agent is not None:
+            self._bus.export(AGENT_PATH, self._agent)
         self._bus.add_message_handler(self._on_signal)
         for rule in (
             "type='signal',sender='org.bluez',interface='org.freedesktop.DBus.Properties',member='PropertiesChanged'",
@@ -196,6 +276,28 @@ class BlePeripheral:
                          "RegisterAdvertisement", "oa{sv}", [ADV_PATH, {}])
         self._registered = True
         _LOGGER.info("GATT service and advertisement registered on %s", self._adapter_path)
+        await self._register_agent()
+
+    async def _register_agent(self) -> None:
+        """Become BlueZ's default agent so incoming pairing requests reach us.
+
+        Non-fatal: without an agent the unauthenticated protocol still works.
+        """
+        if self._agent is None:
+            return
+        try:
+            try:
+                await self._call("org.bluez", "/org/bluez", "org.bluez.AgentManager1",
+                                 "RegisterAgent", "os", [AGENT_PATH, AGENT_CAPABILITY])
+            except RuntimeError as err:
+                if "AlreadyExists" not in str(err):  # adapter replug: agent survives
+                    raise
+            await self._call("org.bluez", "/org/bluez", "org.bluez.AgentManager1",
+                             "RequestDefaultAgent", "o", [AGENT_PATH])
+            self._agent_registered = True
+            _LOGGER.info("pairing agent registered (%s)", AGENT_CAPABILITY)
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning("pairing agent registration failed: %s", err)
 
     async def _reregister_soon(self) -> None:
         try:
@@ -208,8 +310,12 @@ class BlePeripheral:
             return
         if msg.member == "PropertiesChanged" and msg.path.startswith(self._adapter_path + "/dev_"):
             iface, changed = msg.body[0], msg.body[1]
-            if iface == "org.bluez.Device1" and "Connected" in changed:
-                self._on_device(msg.path, bool(changed["Connected"].value))
+            if iface == "org.bluez.Device1":
+                for prop in ("Paired", "Bonded", "Trusted"):
+                    if prop in changed:
+                        _LOGGER.info("%s %s=%s", msg.path, prop, changed[prop].value)
+                if "Connected" in changed:
+                    self._on_device(msg.path, bool(changed["Connected"].value))
         elif msg.member == "InterfacesAdded" and msg.body and msg.body[0] == self._adapter_path:
             # adapter re-appeared (reset/replug): registrations are gone
             if "org.bluez.GattManager1" in msg.body[1]:
@@ -231,10 +337,13 @@ class BlePeripheral:
     async def stop(self) -> None:
         if self._bus is None:
             return
-        for iface, member, path in (("org.bluez.LEAdvertisingManager1", "UnregisterAdvertisement", ADV_PATH),
-                                    ("org.bluez.GattManager1", "UnregisterApplication", APP_PATH)):
+        calls = [(self._adapter_path, "org.bluez.LEAdvertisingManager1", "UnregisterAdvertisement", ADV_PATH),
+                 (self._adapter_path, "org.bluez.GattManager1", "UnregisterApplication", APP_PATH)]
+        if self._agent_registered:
+            calls.append(("/org/bluez", "org.bluez.AgentManager1", "UnregisterAgent", AGENT_PATH))
+        for obj, iface, member, path in calls:
             try:
-                await self._call("org.bluez", self._adapter_path, iface, member, "o", [path])
+                await self._call("org.bluez", obj, iface, member, "o", [path])
             except Exception as err:  # noqa: BLE001
                 _LOGGER.debug("%s failed: %s", member, err)
         self._bus.disconnect()

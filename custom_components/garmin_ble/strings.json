@@ -16,8 +16,12 @@
         "description": "Enter this value as \"Shared secret\" in the HassControl BLE app settings (Garmin Connect app > Connect IQ > HassControl BLE > Settings):\n\n`{secret}`\n\nIt stays stored in this integration's configuration."
       }
     },
-    "error": {"bad_secret": "The secret must be exactly 32 hexadecimal digits."},
-    "abort": {"already_configured": "This adapter is already configured."}
+    "error": {
+      "bad_secret": "The secret must be exactly 32 hexadecimal digits."
+    },
+    "abort": {
+      "already_configured": "This adapter is already configured."
+    }
   },
   "options": {
     "step": {
@@ -25,6 +29,18 @@
         "data": {
           "label": "Label of exposed entities",
           "idle_timeout": "Disconnect idle watch after (seconds)"
+        }
+      }
+    }
+  },
+  "services": {
+    "allow_pairing": {
+      "name": "Allow watch pairing",
+      "description": "Accept Bluetooth pairing from a watch for a limited time. The 6-digit code appears as a notification.",
+      "fields": {
+        "seconds": {
+          "name": "Duration",
+          "description": "How long to accept pairing requests; 0 closes the window."
         }
       }
     }
