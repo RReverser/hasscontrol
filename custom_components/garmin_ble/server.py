@@ -24,6 +24,14 @@ from .peripheral import BlePeripheral, PairingHandler
 
 _LOGGER = logging.getLogger(__name__)
 
+# Unapproved watches: at most this many wait for approval at once (further
+# pairings are refused, so a stranger in range cannot flood HA with cards);
+# a waiting watch is dropped with its bond after PENDING_TTL; an ignored or
+# expired address cannot pair again for REFUSE_SECONDS.
+PENDING_MAX = 3
+PENDING_TTL = 24 * 3600
+REFUSE_SECONDS = 600
+
 _ON_OFF = {"light", "switch", "fan", "input_boolean", "automation", "siren", "humidifier"}
 
 # (domain, action) -> service. Anything not listed is refused.
@@ -74,6 +82,7 @@ class GarminBleServer:
         # bonded but not approved yet: BLE address -> {"code", "at"}
         self._pending: dict[str, dict] = {}
         self._flows_started: set[str] = set()
+        self._refused_until: dict[str, float] = {}  # address -> monotonic deadline
         self._store = Store(hass, 1, f"{DOMAIN}.{entry_id}.watches")
         self.periph = BlePeripheral(adapter, self._on_write, self._on_device, _Pairing(self))
 
@@ -89,10 +98,13 @@ class GarminBleServer:
         await self._save()
         self._refresh_entities()
         await self.periph.start()
+        await self._expire_pending()
         for addr in self._pending:
             self._ask_approval(addr)
         self._unsubs.append(async_track_time_interval(
             self.hass, self._check_idle, timedelta(seconds=5)))
+        self._unsubs.append(async_track_time_interval(
+            self.hass, self._expire_pending, timedelta(hours=1)))
 
     async def async_stop(self) -> None:
         for u in self._unsubs:
@@ -140,6 +152,49 @@ class GarminBleServer:
         await self._save()
         self._ask_approval(addr)
 
+    def may_pair(self, device: str) -> bool:
+        """Pairing policy: refuse ignored/expired addresses for a while and
+        new watches while PENDING_MAX already wait for approval."""
+        addr = _address(device)
+        until = self._refused_until.get(addr)
+        if until is not None:
+            if time.monotonic() < until:
+                _LOGGER.warning("pairing from %s refused: ignored or expired recently", addr)
+                return False
+            del self._refused_until[addr]
+        if addr not in self._pending and len(self._pending) >= PENDING_MAX:
+            _LOGGER.warning("pairing from %s refused: %d watches already await approval",
+                            addr, len(self._pending))
+            return False
+        return True
+
+    async def reject(self, addr: str) -> None:
+        """Drop a watch waiting for approval (Ignore in HA, or expiry) and its
+        bond; the address may not pair again for REFUSE_SECONDS."""
+        if self._pending.pop(addr, None) is None:
+            return
+        self._refused_until[addr] = time.monotonic() + REFUSE_SECONDS
+        self._flows_started.discard(addr)
+        self._abort_flows(addr)
+        await self.periph.remove_device(_path(self.periph.adapter_path, addr))
+        await self._save()
+        _LOGGER.info("watch %s not approved; bond removed", addr)
+
+    async def _expire_pending(self, _now=None) -> None:
+        cutoff = time.time() - PENDING_TTL
+        for addr in [a for a, info in self._pending.items() if info.get("at", 0) < cutoff]:
+            await self.reject(addr)
+
+    @callback
+    def _abort_flows(self, addr: str) -> None:
+        """Close the approval card for this watch, if one is open."""
+        flows = getattr(self.hass.config_entries, "flow", None)
+        if flows is None:
+            return
+        for flow in flows.async_progress_by_handler(DOMAIN):
+            if flow["context"].get("unique_id") == f"watch_{addr}":
+                flows.async_abort(flow["flow_id"])
+
     @callback
     def _ask_approval(self, addr: str) -> None:
         if addr in self._flows_started:
@@ -167,6 +222,7 @@ class GarminBleServer:
             self._watches.pop(addr, None)
             self._pending.pop(addr, None)
             self._flows_started.discard(addr)
+            self._abort_flows(addr)
             await self.periph.remove_device(_path(self.periph.adapter_path, addr))
         await self._save()
 
@@ -338,6 +394,8 @@ class _Pairing(PairingHandler):
         if passkey is None:
             # Just Works: no code, so nothing to show for approval
             _LOGGER.warning("pairing request from %s refused: %s has no code", device, kind)
+            return False
+        if not self._s.may_pair(device):
             return False
         await self._s.bonded(device, passkey)
         _LOGGER.info("bonded with %s (code %06d), awaiting approval", device, passkey)

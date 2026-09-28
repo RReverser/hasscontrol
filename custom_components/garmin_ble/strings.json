@@ -12,13 +12,14 @@
       },
       "approve": {
         "title": "Allow Garmin watch {address}?",
-        "description": "The watch {address} paired over Bluetooth with code **{code}**. Allow it only if your watch showed the same code. It can then control the entities you exposed."
+        "description": "The watch {address} paired over Bluetooth with code **{code}**. Allow it only if your watch showed the same code. It can then control the entities you exposed. Ignore removes its pairing; unanswered requests expire after 24 hours."
       }
     },
     "abort": {
       "already_configured": "This adapter is already configured.",
       "watch_approved": "Watch approved.",
-      "not_pending": "This watch is no longer waiting for approval."
+      "not_pending": "This watch is no longer waiting for approval.",
+      "watch_ignored": "Watch not approved; its Bluetooth pairing was removed."
     },
     "flow_title": "Garmin watch {address}"
   },

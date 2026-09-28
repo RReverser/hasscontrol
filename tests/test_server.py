@@ -273,3 +273,53 @@ async def test_approve_flow(hass_env):
     await f.async_step_integration_discovery({"entry_id": "e1", "address": "11:22", "code": "000042"})
     assert (await f.async_step_approve({}))["reason"] == "not_pending"
     await hass.async_stop(force=True)
+
+
+@pytest.mark.asyncio
+async def test_pending_limits_ignore_and_expiry(hass_env, monkeypatch):
+    hass, server, _ = await hass_env()
+    monkeypatch.setattr(srv.discovery_flow, "async_create_flow", lambda *a, **k: None)
+    pairing = server.periph.pairing
+
+    def dev(n):
+        return f"/org/bluez/hci0/dev_00_00_00_00_00_0{n}"
+
+    # at most PENDING_MAX watches wait; the next new one is refused
+    for n in range(srv.PENDING_MAX):
+        assert await pairing.confirm(dev(n), 100 + n, "numeric_comparison") is True
+    assert await pairing.confirm(dev(9), 999, "numeric_comparison") is False
+    # a waiting watch may pair again (new code replaces the old one)
+    assert await pairing.confirm(dev(0), 555, "numeric_comparison") is True
+    assert server.pending["00:00:00:00:00:00"]["code"] == "000555"
+    # Ignore: dropped with its bond, refused for a while, then allowed again
+    await server.reject("00:00:00:00:00:00")
+    assert "00:00:00:00:00:00" not in server.pending
+    assert server.periph.removed == [dev(0)]
+    assert await pairing.confirm(dev(0), 1, "numeric_comparison") is False
+    server._refused_until["00:00:00:00:00:00"] = 0
+    assert await pairing.confirm(dev(0), 1, "numeric_comparison") is True
+    # expiry after PENDING_TTL
+    server.pending["00:00:00:00:00:01"]["at"] -= srv.PENDING_TTL + 1
+    await server._expire_pending()
+    assert "00:00:00:00:00:01" not in server.pending
+    assert server.periph.removed[-1] == dev(1)
+    await hass.async_stop(force=True)
+
+
+@pytest.mark.asyncio
+async def test_ignore_flow_rejects_watch(hass_env):
+    from homeassistant import config_entries
+    from custom_components.garmin_ble.config_flow import GarminBleConfigFlow
+    from custom_components.garmin_ble.const import DOMAIN
+
+    hass, server, _ = await hass_env()
+    hass.data[DOMAIN] = {"e1": server}
+    hass.config_entries = config_entries.ConfigEntries(hass, {})
+    await hass.config_entries.async_initialize()
+    await server.periph.pairing.confirm("/org/bluez/hci0/dev_11_22", 42, "numeric_comparison")
+    f = GarminBleConfigFlow()
+    f.hass, f.handler, f.flow_id, f.context = hass, DOMAIN, "y", {"source": "ignore"}
+    res = await f.async_step_ignore({"unique_id": "watch_11:22", "title": "x"})
+    assert res["type"] == "abort" and res["reason"] == "watch_ignored"
+    assert "11:22" not in server.pending and server.periph.removed == ["/org/bluez/hci0/dev_11_22"]
+    await hass.async_stop(force=True)
