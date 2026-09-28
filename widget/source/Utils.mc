@@ -476,7 +476,8 @@ module Utils {
     if (c != null) {
       msg = msg + c;
     }
-    System.println(msg);
+    var ct = System.getClockTime();
+    System.println(ct.hour.format("%02d") + ":" + ct.min.format("%02d") + ":" + ct.sec.format("%02d") + " " + msg);
   }
 
   (:release)
