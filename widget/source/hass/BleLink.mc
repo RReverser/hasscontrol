@@ -28,6 +28,7 @@ module Hass {
   // Experimental: ask for an encrypted, bonded link (LE pairing).
   const BOND = true;
   const DISCOVERY_WAIT_MS = 8000;
+  const STORAGE_BOND_TRY = "ble/bondTry";
   const BOND_WAIT_MS = 30000;  // user has to confirm the code on the watch
 
   const MSG_CHALLENGE = 0x81;
@@ -70,7 +71,7 @@ module Hass {
     hidden var _reasm = new Reassembler();
     hidden var _connectStarted = 0;
     hidden var _connectTries = 0;
-    hidden var _secureStrategy = false;
+    hidden var _cccd = null;
     hidden var _discoveryStarted = 0;
     hidden var _svcUuid;
     hidden var _cmdUuid;
@@ -170,6 +171,7 @@ module Hass {
       _setState(newState);
       _device = null;
       _cmd = null;
+      _cccd = null;
       _writeQueue = [];
       _writing = false;
       _nonce = null;
@@ -215,7 +217,7 @@ module Hass {
       }
       if (_state == LINK_BONDING && now - _connectStarted > BOND_WAIT_MS && _device != null) {
         Utils.debugLog("BLE: no encryption status, continuing without bond", null, null);
-        _subscribe(_device);
+        _enableNotify();
         return;
       }
       if (_state == LINK_CONNECTING && now - _connectStarted > CONNECT_ATTEMPT_MS) {
@@ -292,48 +294,24 @@ module Hass {
       }
     }
 
-    // LE pairing. With CONNECTION_STRATEGY_SECURE_PAIR_BOND (API 5.1) the
-    // system starts pairing by itself right after connecting (on a Fenix 7:
-    // LE Secure Connections, Numeric Comparison, the user confirms a 6-digit
-    // code on the watch) and reports the result in onEncryptionStatus.
-    // Calling Device.requestBond() on top of that crashes the app with a
-    // System Error (seen on Fenix 7 fw 27.18, CIQ 6.0.2), so it is only used
-    // when the strategy API is missing. Unbonded links still work: the
-    // protocol authenticates every command.
+    // Order after connecting: find the service, then (if not bonded yet)
+    // bond, then enable notifications.
+    //
+    // Findings on a Fenix 7 (fw 27.18, CIQ 6.0.2):
+    // - Under CONNECTION_STRATEGY_SECURE_PAIR_BOND the system pairs by
+    //   itself (LE Secure Connections, Numeric Comparison), but getService()
+    //   then stays null for good, even after encryption succeeds and although
+    //   the watch discovered HA's service. So the default strategy is used and
+    //   the service is looked up before bonding.
+    // - Device.requestBond() while that strategy was active crashed the app
+    //   with an uncatchable System Error. A Storage flag set around the call
+    //   stops a crash from repeating: if it is still set on the next attempt,
+    //   bonding is skipped and the link stays unencrypted (every command is
+    //   authenticated by the protocol either way).
     hidden function _secure(device) {
-      var bonded = (device has :isBonded) ? device.isBonded() : false;
-      Utils.debugLog("BLE: bonded=", bonded, " strategy=" + _secureStrategy);
-      if (BOND && !bonded && (_secureStrategy || (device has :requestBond))) {
-        _setState(LINK_BONDING);
-        _connectStarted = System.getTimer();
-        if (!_secureStrategy) {
-          Utils.debugLog("BLE: requesting bond", null, null);
-          device.requestBond();
-        }
-        return;
-      }
       _subscribe(device);
     }
 
-    function onEncryptionStatus(device, status) {
-      Utils.debugLog("BLE: encryption status=", status, " link=" + _state);
-      if (_state == LINK_BONDING) {
-        _subscribe(device);
-      }
-    }
-
-    hidden function _setSecureStrategy() {
-      if (BOND && (Ble has :setConnectionStrategy) && (Ble has :CONNECTION_STRATEGY_SECURE_PAIR_BOND)) {
-        Ble.setConnectionStrategy(Ble.CONNECTION_STRATEGY_SECURE_PAIR_BOND);
-        _secureStrategy = true;
-        Utils.debugLog("BLE: strategy secure pair+bond", null, null);
-      }
-    }
-
-    // The service list can still be empty when a bonded link reports
-    // CONNECTED or encryption completes (seen on a Fenix 7: getService()
-    // returned null both times while HA's service was discovered), so poll
-    // for it from checkTimeout() for up to DISCOVERY_WAIT_MS.
     hidden function _subscribe(device) {
       var svc = device.getService(_svcUuid);
       if (svc == null) {
@@ -346,15 +324,44 @@ module Hass {
       }
       _cmd = svc.getCharacteristic(_cmdUuid);
       var evt = svc.getCharacteristic(_evtUuid);
-      var cccd = evt != null ? evt.getDescriptor(Ble.cccdUuid()) : null;
-      if (_cmd == null || cccd == null) {
+      _cccd = evt != null ? evt.getDescriptor(Ble.cccdUuid()) : null;
+      if (_cmd == null || _cccd == null) {
         Utils.debugLog("BLE: characteristic missing", null, null);
         _fail(BleError.BLE_CONNECT_FAILED);
         return;
       }
+      var bonded = (device has :isBonded) ? device.isBonded() : false;
+      var crashed = App.Storage.getValue(STORAGE_BOND_TRY) == true;
+      Utils.debugLog("BLE: bonded=", bonded, " prevBondCrash=" + crashed);
+      if (BOND && !bonded && !crashed && (device has :requestBond)) {
+        _setState(LINK_BONDING);
+        _connectStarted = System.getTimer();
+        App.Storage.setValue(STORAGE_BOND_TRY, true);
+        Utils.debugLog("BLE: requesting bond", null, null);
+        device.requestBond();
+        return;
+      }
+      _enableNotify();
+    }
+
+    function onEncryptionStatus(device, status) {
+      Utils.debugLog("BLE: encryption status=", status, " link=" + _state);
+      App.Storage.deleteValue(STORAGE_BOND_TRY);
+      if (_state == LINK_BONDING) {
+        _enableNotify();
+      }
+    }
+
+    hidden function _setSecureStrategy() {
+      if ((Ble has :setConnectionStrategy) && (Ble has :CONNECTION_STRATEGY_DEFAULT)) {
+        Ble.setConnectionStrategy(Ble.CONNECTION_STRATEGY_DEFAULT);
+      }
+    }
+
+    hidden function _enableNotify() {
       _setState(LINK_SUBSCRIBING);
       Utils.debugLog("BLE: subscribing", null, null);
-      cccd.requestWrite([0x01, 0x00]b);
+      _cccd.requestWrite([0x01, 0x00]b);
     }
 
     function onDescriptorWrite(descriptor, status) {
