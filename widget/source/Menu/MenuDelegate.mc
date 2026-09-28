@@ -45,6 +45,11 @@ class MenuDelegate extends Ui.Menu2InputDelegate {
             App.getApp().login();
             return true;
         }
+        if (itemId == MenuController.MENU_SHOW_LOG) {
+            var v = new LogView();
+            Ui.pushView(v, new LogDelegate(v), Ui.SLIDE_IMMEDIATE);
+            return true;
+        }
         if (itemId == MenuController.MENU_ENTER_SETTINGS) {
             App.getApp().menu.showSettingsMenu();
             return true;

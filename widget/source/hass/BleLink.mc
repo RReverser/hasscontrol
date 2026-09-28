@@ -130,6 +130,7 @@ module Hass {
       }
       Ble.setDelegate(self);
       _setSecureStrategy();
+      _logSystemDevices();
       if (_profileRegistered) {
         _startScan();
         return;
@@ -181,6 +182,7 @@ module Hass {
 
     hidden function _fail(code) {
       Utils.debugLog("BLE: fail code=", code, null);
+      Utils.saveLog();
       Ble.setScanState(Ble.SCAN_STATE_OFF);
       if (_device != null) {
         try {
@@ -350,6 +352,23 @@ module Hass {
       if (_state == LINK_BONDING) {
         _enableNotify();
       }
+    }
+
+    hidden function _logSystemDevices() {
+      var paired = 0;
+      var it = Ble.getPairedDevices();
+      for (var d = it.next(); d != null; d = it.next()) {
+        paired += 1;
+      }
+      var bonded = -1;
+      if (Ble has :getBondedDevices) {
+        bonded = 0;
+        it = Ble.getBondedDevices();
+        for (var d = it.next(); d != null; d = it.next()) {
+          bonded += 1;
+        }
+      }
+      Utils.debugLog("BLE: system paired=", paired, " bonded=" + bonded);
     }
 
     hidden function _setSecureStrategy() {

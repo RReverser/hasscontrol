@@ -126,6 +126,7 @@ class HassControlApp extends App.AppBase {
     if (Hass.client != null) {
       Hass.client.shutdown();
     }
+    Utils.saveLog();
   }
 
   function getGlanceView() {
@@ -137,6 +138,7 @@ class HassControlApp extends App.AppBase {
   // Return the initial view of your application here
   function getInitialView() {
     Utils.logMem("init:0 enter", null);
+    Utils.loadLog();
     viewController = new ViewController();
     Utils.logMem("init:1 viewController", null);
     menu = new MenuController();

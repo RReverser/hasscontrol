@@ -477,7 +477,45 @@ module Utils {
       msg = msg + c;
     }
     var ct = System.getClockTime();
-    System.println(ct.hour.format("%02d") + ":" + ct.min.format("%02d") + ":" + ct.sec.format("%02d") + " " + msg);
+    var line = ct.hour.format("%02d") + ":" + ct.min.format("%02d") + ":" + ct.sec.format("%02d") + " " + msg;
+    System.println(line);
+    _logRing.add(line);
+    if (_logRing.size() > LOG_RING_MAX) {
+      _logRing = _logRing.slice(_logRing.size() - LOG_RING_MAX, null);
+    }
+  }
+
+  // Last LOG_RING_MAX debug lines, shown by the "BLE log" menu entry so a
+  // failure can be read (or photographed) on the watch without USB. The
+  // ring is saved on app stop and restored on the next start.
+  const LOG_RING_MAX = 60;
+  const STORAGE_LOG = "debug/log";
+  var _logRing = [];
+
+  function logLines() {
+    return _logRing;
+  }
+
+  (:debug)
+  function loadLog() {
+    var prev = App.Storage.getValue(STORAGE_LOG);
+    if (prev instanceof Lang.Array) {
+      _logRing = prev;
+      _logRing.add("---- app started ----");
+    }
+  }
+
+  (:debug)
+  function saveLog() {
+    App.Storage.setValue(STORAGE_LOG, _logRing);
+  }
+
+  (:release)
+  function loadLog() {
+  }
+
+  (:release)
+  function saveLog() {
   }
 
   (:release)

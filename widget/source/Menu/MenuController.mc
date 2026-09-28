@@ -9,6 +9,7 @@ class MenuController {
         MENU_SWITCH_TO_ENTITIES_SCENES,
         MENU_ENTER_SETTINGS,
         MENU_LOGIN,
+        MENU_SHOW_LOG,
 
         MENU_SELECT_START_VIEW,
         MENU_REFRESH_ENTITIES,
@@ -89,6 +90,13 @@ class MenuController {
                 {}
             ));
         }
+
+        menu.addItem(new Ui.MenuItem(
+            "BLE log",
+            "",
+            MenuController.MENU_SHOW_LOG,
+            {}
+        ));
 
         Ui.pushView(menu, _delegate, Ui.SLIDE_IMMEDIATE);
         }
