@@ -126,11 +126,19 @@ async def main(a):
             if idx is not None:
                 for action, want in ((p.ACT_TURN_ON, "on"), (p.ACT_TURN_OFF, "off")):
                     ta = await L.cmd(key, p.OP_ACTION, bytes([idx, action]))
-                    ctr = L.ctr
-                    msgs = await L.recv_until(
-                        lambda m: m[0] == p.MSG_ENTITY and p.decode_entity(m).get("state") == want, timeout=8)
-                    check(f"action_{want}", p.encode_result(ctr, p.ST_OK) in msgs,
-                          ms=round((time.monotonic() - ta) * 1000))
+                    res = p.encode_result(L.ctr, p.ST_OK)
+                    seen = {"result": None, "entity": None}
+
+                    def done(m, res=res, want=want, seen=seen):
+                        now = round((time.monotonic() - ta) * 1000)
+                        if m == res:
+                            seen["result"] = now
+                        elif m[0] == p.MSG_ENTITY and p.decode_entity(m).get("state") == want:
+                            seen["entity"] = now
+                        return None not in seen.values()
+
+                    await L.recv_until(done, timeout=8)
+                    check(f"action_{want}", True, result_ms=seen["result"], state_push_ms=seen["entity"])
                 # wrong action for the domain
                 await L.cmd(key, p.OP_ACTION, bytes([idx, p.ACT_UNLOCK]))
                 check("not_allowed", (await L.recv()) == p.encode_result(L.ctr, p.ST_NOT_ALLOWED))
