@@ -320,7 +320,7 @@ module Hass {
         return;
       }
       var idx = msg[1];
-      var body = _decodeEntity(msg);
+      var body = decodeEntity(msg);
       var id = body["entity_id"];
       if (id == null) {
         return;
@@ -341,64 +341,6 @@ module Hass {
         // unsolicited: HA pushed a state change
         _defer(Utils.method(Hass, :onEntityPushed), null, { :body => body, :context => null });
       }
-    }
-
-    hidden function _decodeEntity(msg) {
-      var attrs = {};
-      var body = { "attributes" => attrs };
-      var i = 2;
-      while (i + 2 <= msg.size()) {
-        var tag = msg[i];
-        var len = msg[i + 1];
-        var s = _utf8(msg.slice(i + 2, i + 2 + len));
-        if (tag == 1) {
-          body["entity_id"] = s;
-        } else if (tag == 2) {
-          body["state"] = s;
-        } else if (tag == 3) {
-          attrs["friendly_name"] = s;
-        } else if (tag == 4) {
-          attrs["unit_of_measurement"] = s;
-        } else if (tag == 5) {
-          attrs["device_class"] = s;
-        } else if (tag == 6) {
-          attrs["icon"] = s;
-        } else if (tag == 7) {
-          attrs["options"] = _split(s, (0x1f).toChar());
-        } else if (tag == 8) {
-          attrs["min"] = s.toFloat();
-        } else if (tag == 9) {
-          attrs["max"] = s.toFloat();
-        } else if (tag == 10) {
-          attrs["step"] = s.toFloat();
-        }
-        i += 2 + len;
-      }
-      return body;
-    }
-
-    hidden function _utf8(bytes) {
-      if (bytes.size() == 0) {
-        return "";
-      }
-      return StringUtil.convertEncodedString(bytes, {
-        :fromRepresentation => StringUtil.REPRESENTATION_BYTE_ARRAY,
-        :toRepresentation => StringUtil.REPRESENTATION_STRING_PLAIN_TEXT,
-        :encoding => StringUtil.CHAR_ENCODING_UTF8
-      });
-    }
-
-    hidden function _split(s, sep) {
-      var out = [];
-      var chars = s.toCharArray();
-      var start = 0;
-      for (var i = 0; i <= chars.size(); i++) {
-        if (i == chars.size() || chars[i] == sep) {
-          out.add(s.substring(start, i));
-          start = i + 1;
-        }
-      }
-      return out;
     }
 
     // ---- failure handling, deferral and timeouts ----------------------------------
@@ -489,5 +431,64 @@ module Hass {
         _timerRunning = false;
       }
     }
+  }
+
+  // ENTITY message (PROTOCOL.md) -> HA REST-style state body.
+  function decodeEntity(msg) {
+    var attrs = {};
+    var body = { "attributes" => attrs };
+    var i = 2;
+    while (i + 2 <= msg.size()) {
+      var tag = msg[i];
+      var len = msg[i + 1];
+      var s = _utf8(msg.slice(i + 2, i + 2 + len));
+      if (tag == 1) {
+        body["entity_id"] = s;
+      } else if (tag == 2) {
+        body["state"] = s;
+      } else if (tag == 3) {
+        attrs["friendly_name"] = s;
+      } else if (tag == 4) {
+        attrs["unit_of_measurement"] = s;
+      } else if (tag == 5) {
+        attrs["device_class"] = s;
+      } else if (tag == 6) {
+        attrs["icon"] = s;
+      } else if (tag == 7) {
+        attrs["options"] = _split(s, (0x1f).toChar());
+      } else if (tag == 8) {
+        attrs["min"] = s.toFloat();
+      } else if (tag == 9) {
+        attrs["max"] = s.toFloat();
+      } else if (tag == 10) {
+        attrs["step"] = s.toFloat();
+      }
+      i += 2 + len;
+    }
+    return body;
+  }
+
+  function _utf8(bytes) {
+    if (bytes.size() == 0) {
+      return "";
+    }
+    return StringUtil.convertEncodedString(bytes, {
+      :fromRepresentation => StringUtil.REPRESENTATION_BYTE_ARRAY,
+      :toRepresentation => StringUtil.REPRESENTATION_STRING_PLAIN_TEXT,
+      :encoding => StringUtil.CHAR_ENCODING_UTF8
+    });
+  }
+
+  function _split(s, sep) {
+    var out = [];
+    var chars = s.toCharArray();
+    var start = 0;
+    for (var i = 0; i <= chars.size(); i++) {
+      if (i == chars.size() || chars[i] == sep) {
+        out.add(s.substring(start, i));
+        start = i + 1;
+      }
+    }
+    return out;
   }
 }

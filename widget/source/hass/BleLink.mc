@@ -59,8 +59,7 @@ module Hass {
     hidden var _key = null;
     hidden var _nonce = null;
     hidden var _ctr = 0;
-    hidden var _buf = null;
-    hidden var _bufSeq = -1;
+    hidden var _reasm = new Reassembler();
     hidden var _svcUuid;
     hidden var _cmdUuid;
     hidden var _evtUuid;
@@ -154,8 +153,7 @@ module Hass {
       _writing = false;
       _nonce = null;
       _ctr = 0;
-      _buf = null;
-      _bufSeq = -1;
+      _reasm = new Reassembler();
     }
 
     hidden function _fail(code) {
@@ -258,20 +256,8 @@ module Hass {
     }
 
     function onCharacteristicChanged(characteristic, value) {
-      if (value == null || value.size() < 1) {
-        return;
-      }
-      var hdr = value[0];
-      var seq = hdr & 0x7f;
-      if (_buf == null || seq != _bufSeq) {
-        _buf = []b;
-        _bufSeq = seq;
-      }
-      _buf.addAll(value.slice(1, null));
-      if ((hdr & 0x80) != 0) {
-        var msg = _buf;
-        _buf = null;
-        _bufSeq = -1;
+      var msg = _reasm.feed(value);
+      if (msg != null) {
         _onMessage(msg);
       }
     }
@@ -308,16 +294,7 @@ module Hass {
 
     hidden function _command(op, payload) {
       _ctr += 1;
-      var msg = []b;
-      msg.addAll(_nonce);
-      msg.addAll([(_ctr >> 24) & 0xff, (_ctr >> 16) & 0xff, (_ctr >> 8) & 0xff, _ctr & 0xff]b);
-      msg.add(op);
-      msg.addAll(payload);
-      var tag = hmacSha256(_key, msg).slice(0, 4);
-      var frame = [op, _ctr & 0xff]b;
-      frame.addAll(payload);
-      frame.addAll(tag);
-      return frame;
+      return buildCommand(_key, _nonce, _ctr, op, payload);
     }
 
     hidden function _queueRaw(frame) {
@@ -338,6 +315,50 @@ module Hass {
         _writing = false;
         _fail(BleError.BLE_WRITE_FAILED);
       }
+    }
+  }
+
+  // Authenticated watch->HA frame: op, ctr8, payload, 4-byte truncated
+  // HMAC-SHA256(key, nonce || ctr_be32 || op || payload). See PROTOCOL.md.
+  function buildCommand(key, nonce, ctr, op, payload) {
+    var msg = []b;
+    msg.addAll(nonce);
+    msg.addAll([(ctr >> 24) & 0xff, (ctr >> 16) & 0xff, (ctr >> 8) & 0xff, ctr & 0xff]b);
+    msg.add(op);
+    msg.addAll(payload);
+    var frame = [op, ctr & 0xff]b;
+    frame.addAll(payload);
+    frame.addAll(hmacSha256(key, msg).slice(0, 4));
+    return frame;
+  }
+
+  // Rebuilds HA->watch messages from <=20-byte notifications:
+  // byte 0 = bit 7 last fragment, bits 0..6 message sequence.
+  class Reassembler {
+    hidden var _buf = null;
+    hidden var _seq = -1;
+
+    function initialize() {
+    }
+
+    function feed(value) {
+      if (value == null || value.size() < 1) {
+        return null;
+      }
+      var hdr = value[0];
+      var seq = hdr & 0x7f;
+      if (_buf == null || seq != _seq) {
+        _buf = []b;   // new message, or a fragment was lost: start over
+        _seq = seq;
+      }
+      _buf.addAll(value.slice(1, null));
+      if ((hdr & 0x80) != 0) {
+        var msg = _buf;
+        _buf = null;
+        _seq = -1;
+        return msg;
+      }
+      return null;
     }
   }
 
