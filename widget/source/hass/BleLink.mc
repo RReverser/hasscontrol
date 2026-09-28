@@ -27,7 +27,7 @@ module Hass {
   const CONNECT_ATTEMPT_MS = 15000;
   // Experimental: ask for an encrypted, bonded link (LE pairing).
   const BOND = true;
-  const BOND_WAIT_MS = 12000;
+  const BOND_WAIT_MS = 30000;  // user has to confirm the code on the watch
 
   const MSG_CHALLENGE = 0x81;
   const MSG_ENTITY = 0x82;
@@ -68,6 +68,7 @@ module Hass {
     hidden var _reasm = new Reassembler();
     hidden var _connectStarted = 0;
     hidden var _connectTries = 0;
+    hidden var _secureStrategy = false;
     hidden var _svcUuid;
     hidden var _cmdUuid;
     hidden var _evtUuid;
@@ -194,7 +195,7 @@ module Hass {
     // advertises every 60-100 ms to shorten that.
     function checkTimeout(now) {
       if (_state == LINK_BONDING && now - _connectStarted > BOND_WAIT_MS && _device != null) {
-        Utils.debugLog("BLE: no encryption status, continuing unbonded", null, null);
+        Utils.debugLog("BLE: no encryption status, continuing without bond", null, null);
         _subscribe(_device);
         return;
       }
@@ -272,22 +273,25 @@ module Hass {
       }
     }
 
-    // Asks the system for an encrypted, bonded link when the API allows it
-    // (Device.requestBond, API 3.1+); the answer arrives in onEncryptionStatus.
-    // Unbonded links still work, the protocol authenticates every command.
+    // LE pairing. With CONNECTION_STRATEGY_SECURE_PAIR_BOND (API 5.1) the
+    // system starts pairing by itself right after connecting (on a Fenix 7:
+    // LE Secure Connections, Numeric Comparison, the user confirms a 6-digit
+    // code on the watch) and reports the result in onEncryptionStatus.
+    // Calling Device.requestBond() on top of that crashes the app with a
+    // System Error (seen on Fenix 7 fw 27.18, CIQ 6.0.2), so it is only used
+    // when the strategy API is missing. Unbonded links still work: the
+    // protocol authenticates every command.
     hidden function _secure(device) {
-      if (BOND && (device has :requestBond) && !device.isBonded()) {
+      var bonded = (device has :isBonded) ? device.isBonded() : false;
+      Utils.debugLog("BLE: bonded=", bonded, " strategy=" + _secureStrategy);
+      if (BOND && !bonded && (_secureStrategy || (device has :requestBond))) {
         _state = LINK_BONDING;
         _connectStarted = System.getTimer();
-        Utils.debugLog("BLE: requesting bond", null, null);
-        try {
+        if (!_secureStrategy) {
+          Utils.debugLog("BLE: requesting bond", null, null);
           device.requestBond();
-          return;
-        } catch (e) {
-          Utils.debugLog("BLE: requestBond threw", null, null);
         }
-      } else if (device has :isBonded) {
-        Utils.debugLog("BLE: bonded=", device.isBonded(), null);
+        return;
       }
       _subscribe(device);
     }
@@ -302,6 +306,7 @@ module Hass {
     hidden function _setSecureStrategy() {
       if (BOND && (Ble has :setConnectionStrategy) && (Ble has :CONNECTION_STRATEGY_SECURE_PAIR_BOND)) {
         Ble.setConnectionStrategy(Ble.CONNECTION_STRATEGY_SECURE_PAIR_BOND);
+        _secureStrategy = true;
         Utils.debugLog("BLE: strategy secure pair+bond", null, null);
       }
     }

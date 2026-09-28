@@ -404,6 +404,10 @@ module Hass {
     function _tick() {
       var now = System.getTimer();
       _link.checkTimeout(now);
+      if (_connectDeadline != null && _link.getState() == LINK_BONDING) {
+        // pairing waits for the user to confirm the code on the watch
+        _connectDeadline = now + CONNECT_TIMEOUT_MS;
+      }
 
       if (_connectDeadline != null && !_ready && now > _connectDeadline) {
         _link.stop();
