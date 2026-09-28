@@ -63,13 +63,13 @@ class GarminBleConfigFlow(ConfigFlow, domain=DOMAIN):
         )
 
     async def async_step_ignore(self, user_input: dict[str, Any]) -> ConfigFlowResult:
-        """Ignore on an approval card: drop the watch and its bond instead of
-        remembering the address as ignored, so it can pair again later."""
+        """Ignore on an approval card: the standard ignored entry, plus the
+        waiting watch and its Bluetooth bond are removed. Further pairing from
+        that address is refused until the entry is un-ignored."""
         uid = user_input["unique_id"]
         if uid.startswith("watch_"):
             for server in self.hass.data.get(DOMAIN, {}).values():
-                await server.reject(uid[len("watch_"):])
-            return self.async_abort(reason="watch_ignored")
+                await server.drop_pending(uid[len("watch_"):])
         return await super().async_step_ignore(user_input)
 
     @staticmethod

@@ -29,10 +29,10 @@ Enforcement on HA: CMD is `secure-write` and EVT's CCCD `secure-notify`
 (BlueZ rejects both on links without an LE Secure Connections key); Just
 Works pairing is refused; HELLO from an address that is not approved gets
 NOT_PAIRED or NOT_APPROVED; a new bond for an approved address drops the
-approval and asks again. At most 3 watches wait for approval at once
-(further pairings are refused). **Ignore** on the card, or 24 h without an
-answer, removes the waiting watch and its bond, and that address cannot pair
-again for 10 minutes. The integration's options list approved and
+approval and asks again. A card left unanswered for 24 h is withdrawn and
+the watch's bond removed. **Ignore** on the card is HA's standard ignore: the
+bond is removed and pairing from that address is refused until it is
+un-ignored under Devices & services. The integration's options list approved and
 waiting watches and can forget them (approval, key and bond removed).
 
 HA cannot start pairing itself: Connect IQ apps can only act as a BLE
