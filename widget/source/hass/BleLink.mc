@@ -114,6 +114,7 @@ module Hass {
         return;
       }
       _state = LINK_REGISTERING;
+      Utils.debugLog("BLE: registering profile", null, null);
       try {
         Ble.registerProfile({
           :uuid => _svcUuid,
@@ -157,6 +158,7 @@ module Hass {
     }
 
     hidden function _fail(code) {
+      Utils.debugLog("BLE: fail code=", code, null);
       Ble.setScanState(Ble.SCAN_STATE_OFF);
       if (_device != null) {
         try {
@@ -170,12 +172,14 @@ module Hass {
 
     hidden function _startScan() {
       _state = LINK_SCANNING;
+      Utils.debugLog("BLE: scanning", null, null);
       Ble.setScanState(Ble.SCAN_STATE_SCANNING);
     }
 
     // ---- BleDelegate callbacks ------------------------------------------
 
     function onProfileRegister(uuid, status) {
+      Utils.debugLog("BLE: profile registered status=", status, null);
       if (status != Ble.STATUS_SUCCESS) {
         _fail(BleError.BLE_UNSUPPORTED);
         return;
@@ -196,6 +200,7 @@ module Hass {
           if (u.equals(_svcUuid)) {
             Ble.setScanState(Ble.SCAN_STATE_OFF);
             _state = LINK_CONNECTING;
+            Utils.debugLog("BLE: found HA, rssi=", r.getRssi(), ", connecting");
             try {
               _device = Ble.pairDevice(r);
             } catch (e) {
@@ -208,6 +213,7 @@ module Hass {
     }
 
     function onConnectedStateChanged(device, state) {
+      Utils.debugLog("BLE: connected state=", state, null);
       if (state == Ble.CONNECTION_STATE_CONNECTED) {
         if (_state != LINK_CONNECTING) {
           return;
@@ -243,10 +249,14 @@ module Hass {
         return;
       }
       _state = LINK_HELLO;
+      Utils.debugLog("BLE: subscribed, HELLO", null, null);
       _queueRaw([OP_HELLO, 1]b);
     }
 
     function onCharacteristicWrite(characteristic, status) {
+      if (status != Ble.STATUS_SUCCESS) {
+        Utils.debugLog("BLE: write status=", status, null);
+      }
       _writing = false;
       if (status != Ble.STATUS_SUCCESS) {
         _fail(BleError.BLE_WRITE_FAILED);
@@ -276,6 +286,7 @@ module Hass {
         _nonce = msg.slice(1, 9);
         _ctr = 0;
         _state = LINK_READY;
+        Utils.debugLog("BLE: session ready, entities=", msg[10], null);
         _listener.onLinkReady(msg[10]);
         return;
       }
