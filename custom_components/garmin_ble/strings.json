@@ -1,0 +1,32 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Garmin watch over BLE",
+        "description": "Home Assistant will advertise a Bluetooth service on this adapter. Entities carrying the label below are exposed to the watch.",
+        "data": {
+          "label": "Label of exposed entities",
+          "adapter": "Bluetooth adapter",
+          "idle_timeout": "Disconnect idle watch after (seconds)",
+          "secret": "Shared secret (32 hex digits, leave empty to generate)"
+        }
+      },
+      "secret": {
+        "title": "Copy this secret to the watch",
+        "description": "Enter this value as \"Shared secret\" in the HassControl BLE app settings (Garmin Connect app > Connect IQ > HassControl BLE > Settings):\n\n`{secret}`\n\nIt stays stored in this integration's configuration."
+      }
+    },
+    "error": {"bad_secret": "The secret must be exactly 32 hexadecimal digits."},
+    "abort": {"already_configured": "This adapter is already configured."}
+  },
+  "options": {
+    "step": {
+      "init": {
+        "data": {
+          "label": "Label of exposed entities",
+          "idle_timeout": "Disconnect idle watch after (seconds)"
+        }
+      }
+    }
+  }
+}
