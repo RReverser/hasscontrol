@@ -9,10 +9,7 @@ import logging
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
-import voluptuous as vol
-
-from homeassistant.core import HomeAssistant, ServiceCall
-from homeassistant.helpers import config_validation as cv
+from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
 
 from .const import (
@@ -29,7 +26,6 @@ from .server import GarminBleServer
 
 _LOGGER = logging.getLogger(__name__)
 PLATFORMS = [Platform.SENSOR]
-SERVICE_ALLOW_PAIRING = "allow_pairing"
 
 
 def _opt(entry: ConfigEntry, key: str, default):
@@ -52,13 +48,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         raise ConfigEntryNotReady(f"BlueZ registration failed: {err}") from err
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = server
-    if not hass.services.has_service(DOMAIN, SERVICE_ALLOW_PAIRING):
-        async def _allow_pairing(call: ServiceCall) -> None:
-            for srv in hass.data.get(DOMAIN, {}).values():
-                srv.allow_pairing(call.data["seconds"])
-
-        hass.services.async_register(DOMAIN, SERVICE_ALLOW_PAIRING, _allow_pairing, schema=vol.Schema(
-            {vol.Optional("seconds", default=120): vol.All(vol.Coerce(int), vol.Range(min=0, max=600))}))
     entry.async_on_unload(entry.add_update_listener(_async_reload))
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
@@ -73,6 +62,4 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     server: GarminBleServer | None = hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
     if server is not None:
         await server.async_stop()
-    if not hass.data.get(DOMAIN):
-        hass.services.async_remove(DOMAIN, SERVICE_ALLOW_PAIRING)
     return ok

@@ -212,14 +212,7 @@ module Hass {
         if (now - _discoveryStarted > DISCOVERY_WAIT_MS) {
           Utils.debugLog("BLE: service never listed", null, null);
           _findServiceElsewhere(_device, true);
-          _secureNext = !_secureNext;
-          try {
-            Ble.unpairDevice(_device);
-          } catch (e) {
-          }
-          _device = null;
-          _setSecureStrategy();
-          _startScan();
+          _fail(BleError.BLE_CONNECT_FAILED);
         } else {
           _subscribe(_device);
         }
@@ -232,8 +225,6 @@ module Hass {
       }
       if (_state == LINK_CONNECTING && now - _connectStarted > CONNECT_ATTEMPT_MS) {
         Utils.debugLog("BLE: connect attempt timed out, rescanning; tries=", _connectTries, null);
-        _secureNext = !_secureNext;
-        _setSecureStrategy();
         if (_device != null) {
           try {
             Ble.unpairDevice(_device);
@@ -355,9 +346,9 @@ module Hass {
       var bonded = (device has :isBonded) ? device.isBonded() : false;
       var crashed = App.Storage.getValue(STORAGE_BOND_TRY) == true;
       Utils.debugLog("BLE: bonded=", bonded, " bondGuard=" + crashed);
-      // under SECURE_PAIR_BOND the system pairs by itself; requestBond()
-      // on top of it crashed the app
-      if (BOND && !bonded && !crashed && !_secureActive && (device has :requestBond)) {
+      // requestBond() under SECURE_PAIR_BOND crashed the app; under the
+      // default strategy it is untested on hardware, hence the guard flag
+      if (BOND && !bonded && !crashed && (device has :requestBond)) {
         _setState(LINK_BONDING);
         _connectStarted = System.getTimer();
         App.Storage.setValue(STORAGE_BOND_TRY, true);
@@ -400,19 +391,15 @@ module Hass {
       if (verbose) {
         _logDevice("cb", device);
       }
-      var lists = [Ble.getPairedDevices()];
-      if (Ble has :getBondedDevices) {
-        lists.add(Ble.getBondedDevices());
-      }
-      for (var l = 0; l < lists.size(); l++) {
-        var it = lists[l];
-        for (var d = it.next(); d != null; d = it.next()) {
-          if (verbose) {
-            _logDevice(l == 0 ? "paired" : "bonded", d);
-          }
-          if (d.getService(_svcUuid) != null) {
-            return d;
-          }
+      // getBondedDevices() yields ScanResults, not Devices (a Device call on
+      // one crashed the app), so only the paired list is searched
+      var it = Ble.getPairedDevices();
+      for (var d = it.next(); d != null; d = it.next()) {
+        if (verbose) {
+          _logDevice("paired", d);
+        }
+        if (d.getService(_svcUuid) != null) {
+          return d;
         }
       }
       return null;
@@ -431,24 +418,14 @@ module Hass {
         + " name=" + d.getName(), " svcs=" + n, names);
     }
 
-    // Connection strategy for this attempt. On a Fenix 7 with a bond:
-    // SECURE_PAIR_BOND connects but the service stays unlisted; DEFAULT
-    // (16:30 run) never formed a connection. Each failure mode switches to
-    // the other one for the next attempt, so one run tries both.
-    hidden var _secureNext = true;
-    hidden var _secureActive = false;
-
+    // Always the default strategy. Under CONNECTION_STRATEGY_SECURE_PAIR_BOND
+    // a Fenix 7 (fw 27.18, CIQ 6.0.2) pairs and encrypts, but every Device
+    // object then reports zero services (getServices() empty, getService()
+    // null) although the watch discovered HA's GATT database. Bonding is
+    // requested explicitly instead, after the service lookup (_subscribe).
     hidden function _setSecureStrategy() {
-      if (!(Ble has :setConnectionStrategy)) {
-        return;
-      }
-      if (_secureNext && (Ble has :CONNECTION_STRATEGY_SECURE_PAIR_BOND)) {
-        Ble.setConnectionStrategy(Ble.CONNECTION_STRATEGY_SECURE_PAIR_BOND);
-        _secureActive = true;
-        Utils.debugLog("BLE: strategy=secure", null, null);
-      } else if (Ble has :CONNECTION_STRATEGY_DEFAULT) {
+      if ((Ble has :setConnectionStrategy) && (Ble has :CONNECTION_STRATEGY_DEFAULT)) {
         Ble.setConnectionStrategy(Ble.CONNECTION_STRATEGY_DEFAULT);
-        _secureActive = false;
         Utils.debugLog("BLE: strategy=default", null, null);
       }
     }
