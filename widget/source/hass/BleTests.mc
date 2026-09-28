@@ -6,46 +6,47 @@ using Toybox.StringUtil;
 // (the Home Assistant side). If these pass, the watch and HA agree byte for byte.
 module Hass {
   (:test)
-  function _hex(s) {
-    return StringUtil.convertEncodedString(s, {
-      :fromRepresentation => StringUtil.REPRESENTATION_STRING_HEX,
-      :toRepresentation => StringUtil.REPRESENTATION_BYTE_ARRAY
-    });
-  }
-
-  (:test)
-  function _eq(a, b) {
-    if (a.size() != b.size()) {
-      return false;
+  class BleTestUtil {
+    static function hex(s) {
+      return StringUtil.convertEncodedString(s, {
+        :fromRepresentation => StringUtil.REPRESENTATION_STRING_HEX,
+        :toRepresentation => StringUtil.REPRESENTATION_BYTE_ARRAY
+      });
     }
-    for (var i = 0; i < a.size(); i++) {
-      if (a[i] != b[i]) {
+
+    static function eq(a, b) {
+      if (a.size() != b.size()) {
         return false;
       }
+      for (var i = 0; i < a.size(); i++) {
+        if (a[i] != b[i]) {
+          return false;
+        }
+      }
+      return true;
     }
-    return true;
   }
 
   (:test)
   function testHmacMatchesPython(logger as Test.Logger) as Lang.Boolean {
-    var key = _hex("f433cbfd79e5db1494bff956ba1f5490");
+    var key = BleTestUtil.hex("f433cbfd79e5db1494bff956ba1f5490");
     var got = hmacSha256(key, [0x61, 0x62, 0x63]b);
-    var want = _hex("e00c062a2d534116728f5d1e4d9955bba6724de5de41a78b5d79f5cfa6d3fa71");
+    var want = BleTestUtil.hex("e00c062a2d534116728f5d1e4d9955bba6724de5de41a78b5d79f5cfa6d3fa71");
     logger.debug("hmac " + got);
-    return _eq(got, want);
+    return BleTestUtil.eq(got, want);
   }
 
   (:test)
   function testCommandFrameMatchesPython(logger as Test.Logger) as Lang.Boolean {
-    var key = _hex("f433cbfd79e5db1494bff956ba1f5490");
-    var nonce = _hex("0102030405060708");
+    var key = BleTestUtil.hex("f433cbfd79e5db1494bff956ba1f5490");
+    var nonce = BleTestUtil.hex("0102030405060708");
     var arg = new [4]b;
     arg.encodeNumber(21.5, Lang.NUMBER_FORMAT_FLOAT, { :offset => 0, :endianness => Lang.ENDIAN_BIG });
     var payload = [3, 0x11]b;
     payload.addAll(arg);
     var got = buildCommand(key, nonce, 300, OP_ACTION, payload);
     logger.debug("frame " + got);
-    return got.size() <= 20 && _eq(got, _hex("042c031141ac0000187ccf4a"));
+    return got.size() <= 20 && BleTestUtil.eq(got, BleTestUtil.hex("042c031141ac0000187ccf4a"));
   }
 
   (:test)
@@ -58,7 +59,7 @@ module Hass {
     ];
     var msg = null;
     for (var i = 0; i < frags.size(); i++) {
-      msg = r.feed(_hex(frags[i]));
+      msg = r.feed(BleTestUtil.hex(frags[i]));
       if (i < frags.size() - 1 && msg != null) {
         return false;
       }
@@ -84,6 +85,6 @@ module Hass {
       return false;
     }
     var m = r.feed([0x82, 0x83, 0x05]b);
-    return m != null && _eq(m, [0x83, 0x05]b);
+    return m != null && BleTestUtil.eq(m, [0x83, 0x05]b);
   }
 }
