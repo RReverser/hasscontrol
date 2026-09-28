@@ -1,9 +1,0 @@
-allow_pairing:
-  fields:
-    seconds:
-      default: 120
-      selector:
-        number:
-          min: 0
-          max: 600
-          unit_of_measurement: s

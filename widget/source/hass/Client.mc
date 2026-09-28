@@ -46,6 +46,7 @@ module Hass {
     hidden var _timer = null;
     hidden var _timerRunning = false;
     hidden var _connectDeadline = null;
+    hidden var _pairNext = false;
 
     function initialize() {
       _link = new BleLink(self);
@@ -76,7 +77,9 @@ module Hass {
       return validateSettings(null) == null && App.Storage.getValue(STORAGE_PAIRED) == true;
     }
 
+    // Pairing (MENU > Pair): the only request allowed to create a bond.
     function login(callback) {
+      _pairNext = true;
       _enqueue({ :k => :login, :cb => callback });
     }
 
@@ -100,8 +103,8 @@ module Hass {
         if (state == LINK_REGISTERING || state == LINK_SCANNING) {
           text = "Searching for\nHome Assistant";
         } else if (state == LINK_BONDING) {
-          text = "Pairing:\nconfirm the code";
-        } else if (state == LINK_CONNECTING || state == LINK_DISCOVERING
+          text = "Confirm the code\non the watch\nand in HA";
+        } else if (state == LINK_CONNECTING || state == LINK_DISCOVERING || state == LINK_ENCRYPTING
                    || state == LINK_SUBSCRIBING || state == LINK_HELLO) {
           text = "Connecting";
         }
@@ -194,7 +197,8 @@ module Hass {
         if (_connectDeadline == null) {
           _connectDeadline = System.getTimer() + CONNECT_TIMEOUT_MS;
         }
-        _link.start();
+        _link.start(_pairNext);
+        _pairNext = false;
       }
       _ensureTick();
     }
@@ -327,7 +331,7 @@ module Hass {
       _failPending(new BleError(BleError.BLE_TIMEOUT));
       if (_ops.size() > 0) {
         _connectDeadline = System.getTimer() + CONNECT_TIMEOUT_MS;
-        _link.start();
+        _link.start(false);
       }
     }
 

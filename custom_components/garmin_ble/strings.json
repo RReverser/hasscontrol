@@ -32,17 +32,5 @@
         }
       }
     }
-  },
-  "services": {
-    "allow_pairing": {
-      "name": "Allow watch pairing",
-      "description": "Accept Bluetooth pairing from a watch for a limited time. The 6-digit code appears as a notification.",
-      "fields": {
-        "seconds": {
-          "name": "Duration",
-          "description": "How long to accept pairing requests; 0 closes the window."
-        }
-      }
-    }
   }
 }

@@ -23,7 +23,11 @@ KEY = bytes(range(16))
 class FakePeriph:
     def __init__(self, adapter, on_write, on_device, pairing=None):
         self.on_write, self.on_device, self.pairing = on_write, on_device, pairing
-        self.frames, self.disconnected = [], []
+        self.frames, self.disconnected, self.removed = [], [], []
+        self.adapter_path = f"/org/bluez/{adapter}"
+
+    async def remove_device(self, path):
+        self.removed.append(path)
 
     async def start(self):
         pass
@@ -81,6 +85,7 @@ def hass_env(monkeypatch):
             hass.services.async_register(d, s, handler)
         server = srv.GarminBleServer(hass, "e1", KEY, "garmin", "hci0", 30)
         await server.async_start()
+        server._watches["AA"] = {"code": "000000", "at": 0}  # dev_AA used by _hello()
         return hass, server, calls
 
     return make
@@ -171,15 +176,49 @@ async def test_idle_disconnect(hass_env):
 
 
 @pytest.mark.asyncio
-async def test_pairing_window(hass_env):
+async def test_unapproved_device_refused(hass_env):
+    hass, server, calls = await hass_env()
+    dev = "/org/bluez/hci0/dev_BB_CC"
+    server._on_device(dev, True)
+    await server._on_write(dev, p.build_hello())
+    assert server.periph.messages() == [p.encode_result(0, p.ST_NOT_PAIRED)]
+    assert server._conns[dev].session is None
+    await hass.async_stop(force=True)
+
+
+@pytest.mark.asyncio
+async def test_pairing_requires_mode_and_ha_confirmation(hass_env, monkeypatch):
     hass, server, _ = await hass_env()
+    monkeypatch.setattr(srv, "PAIRING_CONFIRM_SECONDS", 0.2)
     pairing = server.periph.pairing
     dev = "/org/bluez/hci0/dev_90_F1_57_AB_AA_08"
+    # pairing mode off: refused at once
     assert await pairing.confirm(dev, 123456, "numeric_comparison") is False
-    server.allow_pairing(60)
-    assert await pairing.confirm(dev, 123456, "numeric_comparison") is True
-    assert await pairing.confirm(dev, None, "just_works") is True
-    server.allow_pairing(0)
-    assert await pairing.confirm(dev, 42, "numeric_comparison") is False
+    server.start_pairing_mode(60)
+    # Just Works has no code to compare: always refused
+    assert await pairing.confirm(dev, None, "just_works") is False
+    # not confirmed in HA in time: refused
+    assert await pairing.confirm(dev, 111111, "numeric_comparison") is False
+    assert not server.is_approved(dev)
+    # confirmed in HA while pending: approved, persisted, pairing mode closed
+    task = hass.async_create_task(pairing.confirm(dev, 654321, "numeric_comparison"))
+    for _ in range(50):
+        if server.pending_code == "654321":
+            break
+        await asyncio.sleep(0.01)
+    assert server.pending_code == "654321"
+    assert server.confirm_pending() is True
+    assert await task is True
+    assert server.is_approved(dev) and not server.pairing_mode
+    assert "90:F1:57:AB:AA:08" in server.watches
+    # approved watch gets a session
+    server._on_device(dev, True)
+    await server._on_write(dev, p.build_hello())
+    assert server.periph.messages()[0][0] == p.MSG_CHALLENGE
+    # forget: bond removed, HELLO refused again
+    await server.forget_watches()
+    assert server.periph.removed == ["/org/bluez/hci0/dev_AA", "/org/bluez/hci0/dev_90_F1_57_AB_AA_08"]
+    await server._on_write(dev, p.build_hello())
+    assert server.periph.messages() == [p.encode_result(0, p.ST_NOT_PAIRED)]
     await hass.async_block_till_done()
     await hass.async_stop(force=True)

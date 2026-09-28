@@ -4,7 +4,7 @@
 
     <!-- Entity List -->
     <string id="NoEntities">No entities configured</string>
-    <string id="NotPaired">Not paired.\nMENU &gt; Pair</string>
+    <string id="NotPaired">Not paired.\nIn HA press\nPair watch, then\nMENU &gt; Pair</string>
 
 
 
@@ -28,4 +28,6 @@
     <string id="Error_Ble_NotAllowed">Not allowed</string>
     <string id="Error_Ble_Service">Action failed\nin HA</string>
     <string id="Error_Ble_UnknownEntity">Entity not\nexposed</string>
+    <string id="Error_Ble_NotPaired">Not paired.\nIn HA press\nPair watch, then\nMENU &gt; Pair</string>
+    <string id="Error_Ble_PairFailed">Pairing failed.\nIs HA in\npairing mode?</string>
 </strings>

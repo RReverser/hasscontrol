@@ -79,8 +79,8 @@ module Hass {
     }
   }
 
-  // Entity views call this from onShow(). The first call starts pairing when
-  // the app is not paired, or shows the connection step already under way.
+  // Entity views call this from onShow(). The first call shows the
+  // connection step already under way, if any.
   function onViewShown() {
     if (_uiShown) {
       return;
@@ -89,12 +89,10 @@ module Hass {
     client.later(Utils.method(Hass, :_afterFirstShow));
   }
 
+  // Unpaired: nothing is started. Pairing needs HA in pairing mode first
+  // (HA refuses it otherwise), so it only runs from MENU > Pair.
   function _afterFirstShow(err, data) {
-    if (!App.getApp().isLoggedIn()) {
-      if (client.validateSettings(null) == null) {
-        App.getApp().login();
-      }
-    } else if (_linkText != null) {
+    if (_linkText != null) {
       onLinkStatus(_linkText);
     }
   }

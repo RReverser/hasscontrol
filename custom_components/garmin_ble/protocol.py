@@ -37,6 +37,7 @@ ST_NOT_ALLOWED = 3
 ST_SERVICE_ERROR = 4
 ST_BAD_FRAME = 5
 ST_NO_SESSION = 6
+ST_NOT_PAIRED = 7  # HELLO from a device that is not an approved, bonded watch
 
 # ACTION codes
 ACT_TURN_ON = 0

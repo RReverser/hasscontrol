@@ -10,6 +10,24 @@ Every frame in both directions fits in **20 bytes**. Connect IQ throws
 does not implement long reads or long writes, and the ATT MTU on the watch is
 not negotiable from Connect IQ, so notifications are also kept to 20 bytes.
 
+## Pairing (required)
+
+The link must be encrypted with a key from LE Secure Connections pairing
+using Numeric Comparison, and the watch must be approved in HA:
+
+1. In HA, press **Pair watch** (pairing mode, 120 s).
+2. The watch requests pairing. BlueZ asks the integration to confirm the
+   6-digit code; HA shows it (notification and the *Watch pairing* sensor)
+   and waits up to 25 s for **Confirm watch pairing**. The watch shows the
+   same code and the user confirms there as well.
+3. On confirmation HA stores the watch's address as approved.
+
+Enforcement on HA: CMD is `secure-write` and EVT's CCCD `secure-notify`
+(BlueZ rejects both on links without an LE Secure Connections key), HELLO
+from an address that is not approved gets RESULT NOT_PAIRED, pairing
+outside pairing mode, without HA confirmation, or with Just Works is
+refused. **Forget paired watches** removes approvals and bonds.
+
 ## GATT layout
 
 | Item | UUID | Properties |
@@ -121,7 +139,8 @@ Fields that are absent are omitted. Entity indices are stable for the
 connection (entities sorted by entity_id when the connection authenticates).
 
 RESULT status codes: 0 OK, 1 BAD_AUTH, 2 BAD_INDEX, 3 NOT_ALLOWED,
-4 SERVICE_ERROR, 5 BAD_FRAME, 6 NO_SESSION.
+4 SERVICE_ERROR, 5 BAD_FRAME, 6 NO_SESSION, 7 NOT_PAIRED (answer to HELLO
+from a device that is not an approved watch, with ctr8 0).
 
 After authentication HA also pushes an ENTITY message whenever an exposed
 entity changes state, so the watch does not need to poll.

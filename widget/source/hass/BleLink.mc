@@ -25,11 +25,10 @@ module Hass {
   const OP_BYE = 0x07;
 
   const CONNECT_ATTEMPT_MS = 15000;
-  // Experimental: ask for an encrypted, bonded link (LE pairing).
-  const BOND = true;
   const DISCOVERY_WAIT_MS = 8000;
   const STORAGE_BOND_TRY = "ble/bondTry";
-  const BOND_WAIT_MS = 30000;  // user has to confirm the code on the watch
+  const BOND_WAIT_MS = 40000;  // user confirms the code on the watch and in HA
+  const ENCRYPTION_WAIT_MS = 5000;  // bonded link: LTK encryption after connect
 
   const MSG_CHALLENGE = 0x81;
   const MSG_ENTITY = 0x82;
@@ -42,6 +41,7 @@ module Hass {
   const ST_NOT_ALLOWED = 3;
   const ST_SERVICE_ERROR = 4;
   const ST_NO_SESSION = 6;
+  const ST_NOT_PAIRED = 7;
 
   // Link states
   enum {
@@ -51,6 +51,7 @@ module Hass {
     LINK_CONNECTING,
     LINK_BONDING,
     LINK_DISCOVERING,
+    LINK_ENCRYPTING,
     LINK_SUBSCRIBING,
     LINK_HELLO,
     LINK_READY,
@@ -73,6 +74,9 @@ module Hass {
     hidden var _connectTries = 0;
     hidden var _cccd = null;
     hidden var _discoveryStarted = 0;
+    hidden var _pairing = false;     // this connection may create a bond (user chose Pair)
+    hidden var _encWaitStarted = 0;
+    hidden var _cccdRetried = false;
     hidden var _svcUuid;
     hidden var _cmdUuid;
     hidden var _evtUuid;
@@ -120,7 +124,14 @@ module Hass {
     }
 
     // Starts (or resumes) the connection sequence. Safe to call repeatedly.
-    function start() {
+    // pairing == true only when the user asked to pair (MENU > Pair): only
+    // then may an unbonded link request a bond, because HA refuses pairing
+    // outside its pairing mode and a Fenix 7 restarted itself once after a
+    // refused pairing.
+    function start(pairing) {
+      if (pairing) {
+        _pairing = true;
+      }
       if (_state != LINK_IDLE && _state != LINK_FAILED) {
         return;
       }
@@ -132,7 +143,7 @@ module Hass {
       _setSecureStrategy();
       _logSystemDevices();
       if (_profileRegistered) {
-        _startScan();
+        _connect();
         return;
       }
       _setState(LINK_REGISTERING);
@@ -178,6 +189,10 @@ module Hass {
       _nonce = null;
       _ctr = 0;
       _reasm = new Reassembler();
+      _cccdRetried = false;
+      if (newState == LINK_READY || newState == LINK_FAILED) {
+        _pairing = false;
+      }
     }
 
     hidden function _fail(code) {
@@ -192,6 +207,33 @@ module Hass {
       }
       _reset(LINK_FAILED);
       _listener.onLinkError(code);
+    }
+
+    // A bonded HA is reconnected directly (getBondedDevices() returns
+    // ScanResults usable with pairDevice()); otherwise scan for its service.
+    hidden function _connect() {
+      if (Ble has :getBondedDevices) {
+        var it = Ble.getBondedDevices();
+        var r = it.next();
+        if (r != null) {
+          Utils.debugLog("BLE: connecting to bonded HA", null, null);
+          _pairWith(r);
+          return;
+        }
+      }
+      _startScan();
+    }
+
+    hidden function _pairWith(r) {
+      Ble.setScanState(Ble.SCAN_STATE_OFF);
+      _setState(LINK_CONNECTING);
+      _connectStarted = System.getTimer();
+      _connectTries += 1;
+      try {
+        _device = Ble.pairDevice(r);
+      } catch (e) {
+        _fail(BleError.BLE_CONNECT_FAILED);
+      }
     }
 
     hidden function _startScan() {
@@ -218,8 +260,13 @@ module Hass {
         }
         return;
       }
-      if (_state == LINK_BONDING && now - _connectStarted > BOND_WAIT_MS && _device != null) {
-        Utils.debugLog("BLE: no encryption status, continuing without bond", null, null);
+      if (_state == LINK_BONDING && now - _connectStarted > BOND_WAIT_MS) {
+        Utils.debugLog("BLE: pairing timed out", null, null);
+        _fail(BleError.BLE_PAIR_FAILED);
+        return;
+      }
+      if (_state == LINK_ENCRYPTING && now - _encWaitStarted > ENCRYPTION_WAIT_MS) {
+        // no encryption status arrived: retry the subscription once anyway
         _enableNotify();
         return;
       }
@@ -246,7 +293,7 @@ module Hass {
       }
       _profileRegistered = true;
       if (_state == LINK_REGISTERING) {
-        _startScan();
+        _connect();
       }
     }
 
@@ -258,16 +305,8 @@ module Hass {
         var uuids = r.getServiceUuids();
         for (var u = uuids.next(); u != null; u = uuids.next()) {
           if (u.equals(_svcUuid)) {
-            Ble.setScanState(Ble.SCAN_STATE_OFF);
-            _setState(LINK_CONNECTING);
             Utils.debugLog("BLE: found HA, rssi=", r.getRssi(), ", connecting");
-            _connectStarted = System.getTimer();
-            _connectTries += 1;
-            try {
-              _device = Ble.pairDevice(r);
-            } catch (e) {
-              _fail(BleError.BLE_CONNECT_FAILED);
-            }
+            _pairWith(r);
             return;
           }
         }
@@ -344,25 +383,45 @@ module Hass {
         return;
       }
       var bonded = (device has :isBonded) ? device.isBonded() : false;
-      var crashed = App.Storage.getValue(STORAGE_BOND_TRY) == true;
-      Utils.debugLog("BLE: bonded=", bonded, " bondGuard=" + crashed);
-      // requestBond() under SECURE_PAIR_BOND crashed the app; under the
-      // default strategy it is untested on hardware, hence the guard flag
-      if (BOND && !bonded && !crashed && (device has :requestBond)) {
-        _setState(LINK_BONDING);
-        _connectStarted = System.getTimer();
-        App.Storage.setValue(STORAGE_BOND_TRY, true);
-        Utils.debugLog("BLE: requesting bond", null, null);
-        device.requestBond();
+      var guard = App.Storage.getValue(STORAGE_BOND_TRY) == true;
+      Utils.debugLog("BLE: bonded=", bonded, " pairing=" + _pairing + " bondGuard=" + guard);
+      if (bonded) {
+        // HA's characteristics need an encrypted link; the system encrypts
+        // bonded links with the stored key (HA also sends a security
+        // request). A subscription that races ahead of it is retried from
+        // onDescriptorWrite.
+        _enableNotify();
         return;
       }
-      _enableNotify();
+      if (!_pairing) {
+        _fail(BleError.BLE_NOT_PAIRED);
+        return;
+      }
+      if (guard || !(device has :requestBond)) {
+        // the last requestBond() did not come back (app crash) or the API is
+        // missing: let the protected subscription trigger pairing instead
+        Utils.debugLog("BLE: no requestBond, subscribing to trigger pairing", null, null);
+        _enableNotify();
+        return;
+      }
+      _setState(LINK_BONDING);
+      _connectStarted = System.getTimer();
+      App.Storage.setValue(STORAGE_BOND_TRY, true);
+      Utils.saveLog();
+      Utils.debugLog("BLE: requesting bond", null, null);
+      device.requestBond();
     }
 
     function onEncryptionStatus(device, status) {
       Utils.debugLog("BLE: encryption status=", status, " link=" + _state);
       App.Storage.deleteValue(STORAGE_BOND_TRY);
       if (_state == LINK_BONDING) {
+        if (status == Ble.STATUS_SUCCESS) {
+          _enableNotify();
+        } else {
+          _fail(BleError.BLE_PAIR_FAILED);
+        }
+      } else if (_state == LINK_ENCRYPTING && status == Ble.STATUS_SUCCESS) {
         _enableNotify();
       }
     }
@@ -430,6 +489,13 @@ module Hass {
       }
     }
 
+    hidden function _securityStatus(status) {
+      return status == Ble.STATUS_GATT_INSUFFICIENT_ENCRYPTION_FAIL
+        || status == Ble.STATUS_ENCRYPTION_BOND_FAIL
+        || status == Ble.STATUS_ENCRYPTION_SECURITY_INSUFFICIENT
+        || status == Ble.STATUS_ENCRYPTION_PEER_KEYS_LOST;
+    }
+
     hidden function _enableNotify() {
       _setState(LINK_SUBSCRIBING);
       Utils.debugLog("BLE: subscribing", null, null);
@@ -442,7 +508,17 @@ module Hass {
         return;
       }
       if (status != Ble.STATUS_SUCCESS) {
-        _fail(BleError.BLE_CONNECT_FAILED);
+        // HA's CCCD needs an LE Secure Connections encrypted link. On a bonded
+        // link the write may run before encryption is up: wait for the
+        // encryption status (or ENCRYPTION_WAIT_MS) and retry once.
+        if (!_cccdRetried && _device != null && (_device has :isBonded) && _device.isBonded()) {
+          _cccdRetried = true;
+          _setState(LINK_ENCRYPTING);
+          _encWaitStarted = System.getTimer();
+          Utils.debugLog("BLE: subscription refused, waiting for encryption", null, null);
+          return;
+        }
+        _fail(_securityStatus(status) ? BleError.BLE_NOT_PAIRED : BleError.BLE_CONNECT_FAILED);
         return;
       }
       _setState(LINK_HELLO);
@@ -475,6 +551,12 @@ module Hass {
       if (msg.size() == 0) {
         return;
       }
+      if (msg[0] == MSG_RESULT && _state == LINK_HELLO && msg.size() >= 3 && msg[2] == ST_NOT_PAIRED) {
+        // HA does not know this watch (bond missing on HA's side, or the
+        // watch was forgotten there)
+        _fail(BleError.BLE_NOT_PAIRED);
+        return;
+      }
       if (msg[0] == MSG_CHALLENGE && _state == LINK_HELLO) {
         if (msg.size() < 11) {
           _fail(BleError.BLE_PROTOCOL);
@@ -483,6 +565,7 @@ module Hass {
         _nonce = msg.slice(1, 9);
         _ctr = 0;
         _setState(LINK_READY);
+        _pairing = false;
         Utils.debugLog("BLE: session ready, entities=", msg[10], null);
         _listener.onLinkReady(msg[10]);
         return;

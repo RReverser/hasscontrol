@@ -222,11 +222,29 @@ class BlePeripheral:
         self._registered = False
         self._tasks: set[asyncio.Task] = set()
         svc_path = APP_PATH + "/service0"
-        self._cmd = _Characteristic(svc_path + "/char0", CMD_UUID, svc_path, ["write"])
-        self._evt = _Characteristic(svc_path + "/char1", EVT_UUID, svc_path, ["notify"])
+        # Both require a link encrypted with an LE Secure Connections key
+        # from authenticated pairing (BlueZ "secure-*": WRITE_SECURE on the
+        # command value and on the event CCCD): only a device that completed
+        # numeric-comparison pairing can send commands or subscribe.
+        self._cmd = _Characteristic(svc_path + "/char0", CMD_UUID, svc_path,
+                                    ["secure-write"])
+        self._evt = _Characteristic(svc_path + "/char1", EVT_UUID, svc_path,
+                                    ["notify", "secure-notify"])
         self._svc = _Service(svc_path, [self._cmd.path, self._evt.path])
         self._adv = _Advertisement()
         self._cmd.on_write = self._handle_write
+
+    @property
+    def adapter_path(self) -> str:
+        return self._adapter_path
+
+    async def remove_device(self, device_path: str) -> None:
+        """Forget a device and its bond (Adapter1.RemoveDevice)."""
+        try:
+            await self._call("org.bluez", self._adapter_path, "org.bluez.Adapter1",
+                             "RemoveDevice", "o", [device_path])
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.debug("RemoveDevice %s failed: %s", device_path, err)
 
     @property
     def registered(self) -> bool:

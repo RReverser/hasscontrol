@@ -13,6 +13,8 @@ module Hass {
     static const BLE_NOT_ALLOWED = 108;
     static const BLE_SERVICE_ERROR = 109;
     static const BLE_UNKNOWN_ENTITY = 110;
+    static const BLE_NOT_PAIRED = 111;
+    static const BLE_PAIR_FAILED = 112;
 
     function initialize(bleCode) {
       Error.initialize(Error.ERROR_UNKNOWN);
@@ -33,6 +35,10 @@ module Hass {
         message = Rez.Strings.Error_Ble_Service;
       } else if (bleCode == BLE_UNKNOWN_ENTITY) {
         message = Rez.Strings.Error_Ble_UnknownEntity;
+      } else if (bleCode == BLE_NOT_PAIRED) {
+        message = Rez.Strings.Error_Ble_NotPaired;
+      } else if (bleCode == BLE_PAIR_FAILED) {
+        message = Rez.Strings.Error_Ble_PairFailed;
       } else {
         message = Rez.Strings.Error_Unknown;
       }
@@ -48,6 +54,9 @@ module Hass {
       }
       if (status == ST_SERVICE_ERROR) {
         return new BleError(BLE_SERVICE_ERROR);
+      }
+      if (status == ST_NOT_PAIRED) {
+        return new BleError(BLE_NOT_PAIRED);
       }
       if (status == ST_BAD_INDEX) {
         return new BleError(BLE_UNKNOWN_ENTITY);
