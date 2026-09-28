@@ -1,5 +1,5 @@
 <strings>
-    <string id="AppName">HassControl</string>
+    <string id="AppName">HassControl BLE</string>
 
 
     <!-- Entity List -->
@@ -18,4 +18,13 @@
 
     <string id="Error_Auth_NotReachable">Server not reachable</string>
     <string id="Error_Auth_Revoked">Login Revoked</string>
+
+    <string id="Error_Ble_NoSecret">Set shared\nsecret in\nsettings</string>
+    <string id="Error_Ble_Unsupported">Bluetooth LE\nnot available</string>
+    <string id="Error_Ble_NotFound">Home Assistant\nnot in range</string>
+    <string id="Error_Ble_Timeout">Bluetooth\ntimeout</string>
+    <string id="Error_Ble_BadAuth">Secret\nrejected</string>
+    <string id="Error_Ble_NotAllowed">Not allowed</string>
+    <string id="Error_Ble_Service">Action failed\nin HA</string>
+    <string id="Error_Ble_UnknownEntity">Entity not\nexposed</string>
 </strings>

@@ -295,10 +295,6 @@ class ViewController {
         message += "\ncode ";
         message += error.responseCode;
 
-        if (error instanceof Hass.OAuthError) {
-          message += "\nauth ";
-        }
-
         if(error.code == Error.ERROR_PHONE_NOT_CONNECTED) {
           Ui.popView(Ui.SLIDE_IMMEDIATE);
           }

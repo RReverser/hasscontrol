@@ -1,5 +1,4 @@
 using Toybox.Application as App;
-using Toybox.Communications as Comm;
 using Toybox.WatchUi as Ui;
 using Toybox.Timer;
 using Toybox.System;
@@ -119,7 +118,11 @@ class HassControlApp extends App.AppBase {
 
   function onStart(state) {}
 
-  function onStop(state) {}
+  function onStop(state) {
+    if (Hass.client != null) {
+      Hass.client.shutdown();
+    }
+  }
 
   function getGlanceView() {
     return [
@@ -189,9 +192,9 @@ class HassControlApp extends App.AppBase {
       delegate = new BaseDelegate();
     }
 
-    var battery_entity_id = App.Properties.getValue("report_battery_id");
-    if (battery_entity_id != null && battery_entity_id.length() > 0) {
-      Hass.reportBatteryValue(battery_entity_id);
+    // Reported to the garmin_ble integration's "Watch battery" sensor.
+    if (App.Properties.getValue("reportBattery") == true) {
+      Hass.reportBatteryValue(null);
     }
 
     // Start inactivity timer if configured

@@ -50,18 +50,10 @@ module Hass {
     client = new Client();
   }
 
+  // Over BLE the exposed entities are chosen in Home Assistant (by label), so
+  // the import always asks for the whole exposed list.
   function getGroup() {
-    var group = App.Properties.getValue("group");
-
-    if (group == null || group.length() == 0) {
-      return null;
-    }
-
-    if (group.find(".") == null) {
-      group = "group." + group;
-    }
-
-    return group;
+    return LIST_ID;
   }
 
   function getEntities() {
@@ -708,6 +700,19 @@ module Hass {
     }
 
     client.getEntity(group, null, Utils.method(Hass, :_onReceiveEntities));
+  }
+
+  // HA pushes a state change for an exposed entity (see Client._onEntity).
+  function onEntityPushed(err, data) {
+    if (err != null || data == null || data[:body] == null) {
+      return;
+    }
+    data[:context] = { :callback => Utils.method(Hass, :_onPushedApplied) };
+    _onReceiveEntity(null, data);
+  }
+
+  function _onPushedApplied(err, entity) {
+    Ui.requestUpdate();
   }
 
   function _onBatteryUpdate(err, data) {

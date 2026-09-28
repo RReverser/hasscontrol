@@ -1,14 +1,9 @@
 <resources>
     <properties>
-        <property id="host" type="string">https://homeassistant.local</property>
-        <!-- <property id="port" type="number">443</property> -->
-        <property id="accessToken" type="string"></property>
+        <property id="secret" type="string"></property>
         <property id="scenes" type="string"></property>
-        <property id="group" type="string">Garmin</property>
         <property id="refresh" type="boolean">false</property>
-        <property id="report_battery_id" type="string"></property>
-        <property id="additional_header_key" type="string"></property>
-        <property id="additional_header_value" type="string"></property>
+        <property id="reportBattery" type="boolean">true</property>
         <property id="closeAfterAction" type="boolean">false</property>
         <property id="autoCloseSeconds" type="number">0</property>
         <property id="useListView" type="boolean">false</property>
@@ -16,15 +11,10 @@
     </properties>
 
     <strings>
-       <string id="host_title">Host: (https://hassio.url)</string>
-       <!-- <string id="port_title">Port: (443 is default for https)</string> -->
-       <string id="access_token">Long-lived access token (optional)</string>
-       <string id="scenes_title">Scenes: (scene1,scene2,scene3)</string>
-       <string id="group_title">Group: (Group used for importing entities)</string>
-       <string id="refresh_title">Refresh on show (uses more battery and network)</string>
-       <string id="report_battery_title">Entity ID to report battery level on startup (off if empty)</string>
-       <string id="additional_header_key_title">Additional HTTP(S) Header - Key</string>
-       <string id="additional_header_value_title">Additional HTTP(S) Header - Value</string>
+       <string id="secret_title">Shared secret (32 hex digits, shown when adding the Garmin BLE integration in Home Assistant)</string>
+       <string id="scenes_title">Scene name overrides: (scene1=Name,scene2)</string>
+       <string id="refresh_title">Refresh on show</string>
+       <string id="reportBattery_title">Report watch battery to Home Assistant</string>
        <string id="closeAfterAction_title">Close App after successful action</string>
        <string id="autoCloseSeconds_title">Auto-close after inactivity (seconds, 0=off)</string>
        <string id="useListView_title">Use list view style (3-row list instead of classic card)</string>
@@ -32,32 +22,17 @@
     </strings>
 
     <settings>
-        <setting propertyKey="@Properties.host" title="@Strings.host_title">
-            <settingConfig type="alphaNumeric" />
-        </setting>
-        <!-- <setting propertyKey="@Properties.port" title="@Strings.port_title">
-            <settingConfig min="1" max="65535" type="numeric" />
-        </setting> -->
-        <setting propertyKey="@Properties.accessToken" title="@Strings.access_token">
+        <setting propertyKey="@Properties.secret" title="@Strings.secret_title">
             <settingConfig type="alphaNumeric" />
         </setting>
         <setting propertyKey="@Properties.scenes" title="@Strings.scenes_title">
             <settingConfig type="alphaNumeric" />
         </setting>
-        <setting propertyKey="@Properties.group" title="@Strings.group_title">
-            <settingConfig type="alphaNumeric" />
-        </setting>
         <setting propertyKey="@Properties.refresh" title="@Strings.refresh_title">
             <settingConfig type="boolean" />
         </setting>
-        <setting propertyKey="@Properties.report_battery_id" title="@Strings.report_battery_title">
-            <settingConfig type="alphaNumeric" />
-        </setting>
-        <setting propertyKey="@Properties.additional_header_key" title="@Strings.additional_header_key_title">
-            <settingConfig type="alphaNumeric" />
-        </setting>
-        <setting propertyKey="@Properties.additional_header_value" title="@Strings.additional_header_value_title">
-            <settingConfig type="alphaNumeric" />
+        <setting propertyKey="@Properties.reportBattery" title="@Strings.reportBattery_title">
+            <settingConfig type="boolean" />
         </setting>
         <setting propertyKey="@Properties.closeAfterAction" title="@Strings.closeAfterAction_title">
             <settingConfig type="boolean" />
