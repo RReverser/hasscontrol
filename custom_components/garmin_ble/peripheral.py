@@ -20,6 +20,8 @@ SVC_UUID = "6a1e0001-4c7d-4b4e-9a2b-3c8f1d2e5a01"
 CMD_UUID = "6a1e0002-4c7d-4b4e-9a2b-3c8f1d2e5a01"
 EVT_UUID = "6a1e0003-4c7d-4b4e-9a2b-3c8f1d2e5a01"
 LOCAL_NAME = "HA-Watch"
+ADV_MIN_INTERVAL_MS = 60
+ADV_MAX_INTERVAL_MS = 100
 
 APP_PATH = "/io/hasscontrol/garmin_ble"
 ADV_PATH = "/io/hasscontrol_adv/adv0"  # outside APP_PATH: dbus-fast's ObjectManager lists all children
@@ -112,6 +114,18 @@ class _Advertisement(ServiceInterface):
     @dbus_property(access=PropertyAccess.READ)
     def LocalName(self) -> "s":  # noqa: N802
         return LOCAL_NAME
+
+    # The kernel default advertising interval is 1.28 s. Connect IQ centrals
+    # scan with a low duty cycle while connecting, and against 1.28 s adverts
+    # a connection took ~10 s to establish. BlueZ honours these (in ms) when
+    # its experimental interfaces are enabled and ignores them otherwise.
+    @dbus_property(access=PropertyAccess.READ)
+    def MinInterval(self) -> "u":  # noqa: N802
+        return ADV_MIN_INTERVAL_MS
+
+    @dbus_property(access=PropertyAccess.READ)
+    def MaxInterval(self) -> "u":  # noqa: N802
+        return ADV_MAX_INTERVAL_MS
 
     @method()
     def Release(self):  # noqa: N802

@@ -24,7 +24,7 @@ module Hass {
   const OP_BATTERY = 0x05;
   const OP_BYE = 0x07;
 
-  const CONNECT_ATTEMPT_MS = 7000;
+  const CONNECT_ATTEMPT_MS = 15000;
 
   const MSG_CHALLENGE = 0x81;
   const MSG_ENTITY = 0x82;
@@ -180,11 +180,13 @@ module Hass {
       Ble.setScanState(Ble.SCAN_STATE_SCANNING);
     }
 
-    // Called periodically by the client while a connection is pending. A
-    // connect request that the peripheral misses is never retried by the
-    // system, so give up on it after CONNECT_ATTEMPT_MS and scan again: each
-    // new attempt goes out right after a fresh advertisement. Seen against an
-    // Intel BT 4.2 host adapter, where single attempts often never complete.
+    // Called periodically by the client while a connection is pending; a
+    // stalled attempt is abandoned after CONNECT_ATTEMPT_MS and rescanned.
+    // Keep this long: the central scans with a low duty cycle while
+    // connecting, so against BlueZ's default 1.28 s advertising interval a
+    // connection took ~10 s to form (HCI trace), and a shorter timeout
+    // cancelled attempts that were about to succeed. The integration now
+    // advertises every 60-100 ms to shorten that.
     function checkTimeout(now) {
       if (_state == LINK_CONNECTING && now - _connectStarted > CONNECT_ATTEMPT_MS) {
         Utils.debugLog("BLE: connect attempt timed out, rescanning; tries=", _connectTries, null);
