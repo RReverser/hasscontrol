@@ -83,9 +83,9 @@ def hass_env(monkeypatch):
         for d, s in (("input_boolean", "turn_on"), ("input_boolean", "turn_off"), ("input_select", "select_option"),
                      ("input_number", "set_value"), ("lock", "unlock"), ("switch", "turn_on")):
             hass.services.async_register(d, s, handler)
-        server = srv.GarminBleServer(hass, "e1", KEY, "garmin", "hci0", 30)
+        server = srv.GarminBleServer(hass, "e1", "garmin", "hci0", 30)
         await server.async_start()
-        server._watches["AA"] = {"code": "000000", "at": 0}  # dev_AA used by _hello()
+        server._watches["AA"] = {"code": "000000", "at": 0, "key": KEY.hex()}  # dev_AA used by _hello()
         return hass, server, calls
 
     return make
@@ -187,38 +187,89 @@ async def test_unapproved_device_refused(hass_env):
 
 
 @pytest.mark.asyncio
-async def test_pairing_requires_mode_and_ha_confirmation(hass_env, monkeypatch):
+async def test_hello_without_key_gets_key(hass_env):
     hass, server, _ = await hass_env()
-    monkeypatch.setattr(srv, "PAIRING_CONFIRM_SECONDS", 0.2)
+    dev = "/org/bluez/hci0/dev_AA"
+    server._on_device(dev, True)
+    await server._on_write(dev, p.build_hello(has_key=False))
+    msgs = server.periph.messages()
+    assert msgs[0] == p.encode_key(KEY)
+    assert msgs[1][0] == p.MSG_CHALLENGE
+    await server._on_write(dev, bytes([p.OP_HELLO, 1]))  # old protocol
+    assert server.periph.messages() == [p.encode_result(0, p.ST_BAD_FRAME)]
+    await hass.async_stop(force=True)
+
+
+@pytest.mark.asyncio
+async def test_async_approval(hass_env, monkeypatch):
+    hass, server, _ = await hass_env()
+    flows = []
+    monkeypatch.setattr(srv.discovery_flow, "async_create_flow",
+                        lambda hass, domain, context, data: flows.append(data))
     pairing = server.periph.pairing
     dev = "/org/bluez/hci0/dev_90_F1_57_AB_AA_08"
-    # pairing mode off: refused at once
-    assert await pairing.confirm(dev, 123456, "numeric_comparison") is False
-    server.start_pairing_mode(60)
-    # Just Works has no code to compare: always refused
+    addr = "90:F1:57:AB:AA:08"
+    # Just Works has no code to compare: refused
     assert await pairing.confirm(dev, None, "just_works") is False
-    # not confirmed in HA in time: refused
-    assert await pairing.confirm(dev, 111111, "numeric_comparison") is False
+    # numeric comparison: bond accepted at once, approval asked once
+    assert await pairing.confirm(dev, 654321, "numeric_comparison") is True
+    assert server.pending == {addr: {"code": "654321", "at": server.pending[addr]["at"]}}
+    assert flows == [{"entry_id": "e1", "address": addr, "code": "654321"}]
     assert not server.is_approved(dev)
-    # confirmed in HA while pending: approved, persisted, pairing mode closed
-    task = hass.async_create_task(pairing.confirm(dev, 654321, "numeric_comparison"))
-    for _ in range(50):
-        if server.pending_code == "654321":
-            break
-        await asyncio.sleep(0.01)
-    assert server.pending_code == "654321"
-    assert server.confirm_pending() is True
-    assert await task is True
-    assert server.is_approved(dev) and not server.pairing_mode
-    assert "90:F1:57:AB:AA:08" in server.watches
-    # approved watch gets a session
+    # not approved yet: HELLO refused, no second flow
     server._on_device(dev, True)
-    await server._on_write(dev, p.build_hello())
-    assert server.periph.messages()[0][0] == p.MSG_CHALLENGE
-    # forget: bond removed, HELLO refused again
-    await server.forget_watches()
+    await server._on_write(dev, p.build_hello(has_key=False))
+    assert server.periph.messages() == [p.encode_result(0, p.ST_NOT_APPROVED)]
+    assert len(flows) == 1
+    # approved any time later: key issued on next HELLO
+    assert await server.approve(addr) is True
+    assert await server.approve(addr) is False
+    assert server.is_approved(dev) and addr not in server.pending
+    key = bytes.fromhex(server.watches[addr]["key"])
+    await server._on_write(dev, p.build_hello(has_key=False))
+    msgs = server.periph.messages()
+    assert msgs[0] == p.encode_key(key) and msgs[1][0] == p.MSG_CHALLENGE
+    nonce = msgs[1][1:9]
+    await server._on_write(dev, p.build_command(key, nonce, 1, p.OP_LIST))
+    assert server.periph.messages()[-1][0] == p.MSG_LIST_END
+    # new bond for an approved address: approval dropped, asked again
+    assert await pairing.confirm(dev, 111111, "numeric_comparison") is True
+    assert not server.is_approved(dev) and server.pending[addr]["code"] == "111111"
+    assert len(flows) == 2
+    # forget: bond removed, HELLO refused as unpaired
+    await server.forget(["AA", addr])
     assert server.periph.removed == ["/org/bluez/hci0/dev_AA", "/org/bluez/hci0/dev_90_F1_57_AB_AA_08"]
     await server._on_write(dev, p.build_hello())
     assert server.periph.messages() == [p.encode_result(0, p.ST_NOT_PAIRED)]
     await hass.async_block_till_done()
+    await hass.async_stop(force=True)
+
+
+@pytest.mark.asyncio
+async def test_approve_flow(hass_env):
+    from custom_components.garmin_ble.config_flow import GarminBleConfigFlow
+    from custom_components.garmin_ble.const import DOMAIN
+
+    hass, server, _ = await hass_env()
+    from homeassistant import config_entries
+    hass.data[DOMAIN] = {"e1": server}
+    hass.config_entries = config_entries.ConfigEntries(hass, {})
+    await hass.config_entries.async_initialize()
+    await server.periph.pairing.confirm("/org/bluez/hci0/dev_11_22", 42, "numeric_comparison")
+
+    def flow():
+        f = GarminBleConfigFlow()
+        f.hass, f.handler, f.flow_id = hass, DOMAIN, "x"
+        f.context = {"source": "integration_discovery"}
+        return f
+
+    f = flow()
+    res = await f.async_step_integration_discovery({"entry_id": "e1", "address": "11:22", "code": "000042"})
+    assert res["type"] == "form" and res["step_id"] == "approve"
+    assert res["description_placeholders"] == {"address": "11:22", "code": "000042"}
+    assert (await f.async_step_approve({}))["reason"] == "watch_approved"
+    assert "11:22" in server.watches
+    f = flow()
+    await f.async_step_integration_discovery({"entry_id": "e1", "address": "11:22", "code": "000042"})
+    assert (await f.async_step_approve({}))["reason"] == "not_pending"
     await hass.async_stop(force=True)

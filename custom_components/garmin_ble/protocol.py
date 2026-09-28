@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 
 FRAME_MAX = 20
 TAG_LEN = 4
-PROTOCOL_VERSION = 1
+PROTOCOL_VERSION = 2
 CTR_WINDOW = 32
 
 # Watch -> HA ops
@@ -28,6 +28,7 @@ MSG_CHALLENGE = 0x81
 MSG_ENTITY = 0x82
 MSG_LIST_END = 0x83
 MSG_RESULT = 0x84
+MSG_KEY = 0x85  # per-watch command key, sent once over the encrypted link
 
 # RESULT status codes
 ST_OK = 0
@@ -37,7 +38,10 @@ ST_NOT_ALLOWED = 3
 ST_SERVICE_ERROR = 4
 ST_BAD_FRAME = 5
 ST_NO_SESSION = 6
-ST_NOT_PAIRED = 7  # HELLO from a device that is not an approved, bonded watch
+ST_NOT_PAIRED = 7    # HELLO over a link that is not a bonded, encrypted one
+ST_NOT_APPROVED = 8  # bonded, but not approved in HA yet (approval pending)
+
+HELLO_HAS_KEY = 0x01  # HELLO flags: the watch holds a command key from HA
 
 # ACTION codes
 ACT_TURN_ON = 0
@@ -88,8 +92,12 @@ def build_command(key: bytes, nonce: bytes, ctr: int, op: int, payload: bytes = 
     return frame
 
 
-def build_hello() -> bytes:
-    return bytes([OP_HELLO, PROTOCOL_VERSION])
+def build_hello(has_key: bool = True) -> bytes:
+    return bytes([OP_HELLO, PROTOCOL_VERSION, HELLO_HAS_KEY if has_key else 0])
+
+
+def encode_key(key: bytes) -> bytes:
+    return bytes([MSG_KEY]) + key
 
 
 @dataclass

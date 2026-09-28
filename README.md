@@ -7,18 +7,17 @@
 **Home Assistant side** (custom integration `garmin_ble`, in `custom_components/`):
 
 1. HACS → Custom repositories → `RReverser/hasscontrol`, category *Integration* → download → restart HA.
-2. Settings → Devices & services → Add integration → *Garmin Watch (direct BLE)*. Keep the label `garmin` (or pick another), adapter `hci0`. Copy the 32-hex-digit secret it shows.
+2. Settings → Devices & services → Add integration → *Garmin Watch (direct BLE)*. Keep the label `garmin` (or pick another), adapter `hci0`.
 3. Add the `garmin` label to every entity the watch may see and control. Nothing else is exposed, and only the action matching each entity's domain is accepted.
 
 Requirements: HA OS or another install where HA can reach BlueZ over D-Bus, with a local Bluetooth adapter whose controller supports the peripheral role (checked on an Intel USB controller). Bluetooth proxies cannot be used: they only act as centrals.
 
-**Watch side:** build the widget in `widget/` (Connect IQ SDK, permission `BluetoothLowEnergy`) and enter the secret in the app settings. A side-loaded build cannot be configured from Garmin Connect, so for side-loading put the secret as the default of the `secret` property in `widget/resources/properties.xml` in your local build only (do not commit it).
+**Watch side:** build the widget in `widget/` (Connect IQ SDK, permission `BluetoothLowEnergy`), open it and choose **Pair**. Confirm the 6-digit code on the watch; the watch then shows *Approve in HA*. In HA, Settings → Devices & services shows *Garmin watch XX:XX:…* as discovered: open it, check the code matches, submit. The watch picks up its own command key automatically; there is no secret to enter. Watches can be forgotten in the integration's options.
 
 **Behaviour and limits**
 
-- Frames are at most 20 bytes (Connect IQ rejects longer writes). Commands are authenticated with a truncated HMAC-SHA256 over a per-connection nonce and counter; the link itself needs no pairing or encryption.
+- Frames are at most 20 bytes (Connect IQ rejects longer writes). The link must be bonded with LE Secure Connections (numeric comparison) and the watch approved in HA; commands are additionally authenticated with a truncated HMAC-SHA256 (per-watch key) over a per-connection nonce and counter.
 - While one device is connected, the controller stops advertising. HA therefore drops a connection that has been idle for 30 s (configurable), and the app disconnects when it closes.
-- If a connecting device offers LE Audio services (e.g. a Windows laptop), BlueZ on the HA host may ask that device to pair. Declining is fine; the protocol does not need it.
 - The integration adds a *Watch battery* sensor, updated when the app starts (setting *Report watch battery*).
 - `tools/ble_client.py` is a desktop stand-in for the watch (`uv run --no-project --with bleak tools/ble_client.py SECRET --entity input_boolean.x`). Tests: `pytest tests` (HA side, needs `homeassistant`), and `monkeyc -t` + `monkeydo ... /t` for the watch-side protocol vectors in `widget/source/hass/BleTests.mc`.
 

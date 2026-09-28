@@ -59,22 +59,15 @@ module Hass {
       shutdown();
     }
 
+    // Nothing to configure: the watch gets its key from HA after pairing.
     function validateSettings(errorCallback) {
-      var secret = App.Properties.getValue("secret");
-      if (secret == null || secret.length() != 32) {
-        var err = new BleError(BleError.BLE_NO_SECRET);
-        if (errorCallback != null) {
-          errorCallback.invoke(err, null);
-        }
-        return err;
-      }
       return null;
     }
 
-    // "Logged in" = paired: a secret is configured and a session with HA
-    // completed at least once since the last logout.
+    // "Logged in" = paired: a session with HA completed at least once since
+    // the last logout.
     function isLoggedIn() {
-      return validateSettings(null) == null && App.Storage.getValue(STORAGE_PAIRED) == true;
+      return App.Storage.getValue(STORAGE_PAIRED) == true;
     }
 
     // Pairing (MENU > Pair): the only request allowed to create a bond.
@@ -88,6 +81,7 @@ module Hass {
     // to its unpaired start state; HA keeps its side of the bond too.
     function logout() {
       App.Storage.deleteValue(STORAGE_PAIRED);
+      _link.forgetKey();
       shutdown();
     }
 
@@ -101,9 +95,11 @@ module Hass {
       var text = null;
       if (!_ready && _ops.size() > 0) {
         if (state == LINK_REGISTERING || state == LINK_SCANNING) {
-          text = "Searching for\nHome Assistant";
+          text = "Searching";
         } else if (state == LINK_BONDING) {
-          text = "Confirm the code\non the watch\nand in HA";
+          text = "Pairing";
+        } else if (state == LINK_APPROVAL) {
+          text = "HA approval";
         } else if (state == LINK_CONNECTING || state == LINK_DISCOVERING || state == LINK_ENCRYPTING
                    || state == LINK_SUBSCRIBING || state == LINK_HELLO) {
           text = "Connecting";
@@ -438,8 +434,10 @@ module Hass {
     function _tick() {
       var now = System.getTimer();
       _link.checkTimeout(now);
-      if (_connectDeadline != null && _link.getState() == LINK_BONDING) {
-        // pairing waits for the user to confirm the code on the watch
+      var ls = _link.getState();
+      if (_connectDeadline != null && (ls == LINK_BONDING || ls == LINK_APPROVAL)) {
+        // pairing waits for the user to confirm the code on the watch, then
+        // for approval in HA (BleLink bounds both)
         _connectDeadline = now + CONNECT_TIMEOUT_MS;
       }
 

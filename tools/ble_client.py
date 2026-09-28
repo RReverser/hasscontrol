@@ -1,8 +1,11 @@
 """Desktop stand-in for the watch: exercises the garmin_ble integration over real BLE.
 
-    uv run --no-project --with bleak tools/ble_client.py SECRET_HEX [--entity ENTITY_ID]
+    uv run --no-project --with bleak tools/ble_client.py [--entity ENTITY_ID]
 
-Runs: scan -> connect -> HELLO -> LIST -> toggle ENTITY on/off (if given) ->
+The computer must already be bonded with HA (LE Secure Connections) and
+approved in HA like a watch. It asks HA for its key in HELLO each run.
+
+Runs: scan -> connect -> HELLO (key) -> LIST -> toggle ENTITY on/off (if given) ->
 GET -> BATTERY -> replay/wrong-key checks -> BYE. Prints one JSON line per step
 and exits non-zero on any failed check.
 """
@@ -93,7 +96,6 @@ async def find(timeout):
 
 
 async def main(a):
-    key = bytes.fromhex(a.secret)
     t0 = time.monotonic()
     dev, rssi = await find(a.scan)
     out(step="found", addr=dev.address, rssi=rssi, ms=round((time.monotonic() - t0) * 1000))
@@ -104,11 +106,16 @@ async def main(a):
         await L.start()
 
         # unauthenticated command before HELLO -> NO_SESSION
-        await L.write(p.build_command(key, bytes(8), 1, p.OP_LIST))
+        await L.write(p.build_command(bytes(16), bytes(8), 1, p.OP_LIST))
         check("no_session_rejected", (await L.recv()) == p.encode_result(1, p.ST_NO_SESSION))
 
         th = time.monotonic()
-        await L.write(p.build_hello())
+        await L.write(p.build_hello(has_key=False))
+        km = await L.recv()
+        if km[0] != p.MSG_KEY:
+            check("key", False, answer=km.hex())
+            return 1
+        key = km[1:17]
         ch = await L.recv()
         check("challenge", ch[0] == p.MSG_CHALLENGE and ch[9] == p.PROTOCOL_VERSION,
               ms=round((time.monotonic() - th) * 1000), count=ch[10])
@@ -164,7 +171,6 @@ async def main(a):
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("secret")
     ap.add_argument("--entity")
     ap.add_argument("--scan", type=float, default=20)
     sys.exit(asyncio.run(main(ap.parse_args())))

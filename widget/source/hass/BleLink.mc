@@ -29,11 +29,16 @@ module Hass {
   const STORAGE_BOND_TRY = "ble/bondTry";
   const BOND_WAIT_MS = 40000;  // user confirms the code on the watch and in HA
   const ENCRYPTION_WAIT_MS = 5000;  // bonded link: LTK encryption after connect
+  const APPROVAL_WAIT_MS = 600000;  // how long the app waits for approval in HA
+  const APPROVAL_POLL_MS = 3000;    // HELLO retry while waiting for approval
+  const STORAGE_KEY = "ble/key";    // per-watch command key from HA, hex
+  const PROTOCOL_VERSION = 2;
 
   const MSG_CHALLENGE = 0x81;
   const MSG_ENTITY = 0x82;
   const MSG_LIST_END = 0x83;
   const MSG_RESULT = 0x84;
+  const MSG_KEY = 0x85;
 
   const ST_OK = 0;
   const ST_BAD_AUTH = 1;
@@ -42,6 +47,7 @@ module Hass {
   const ST_SERVICE_ERROR = 4;
   const ST_NO_SESSION = 6;
   const ST_NOT_PAIRED = 7;
+  const ST_NOT_APPROVED = 8;
 
   // Link states
   enum {
@@ -54,6 +60,7 @@ module Hass {
     LINK_ENCRYPTING,
     LINK_SUBSCRIBING,
     LINK_HELLO,
+    LINK_APPROVAL,
     LINK_READY,
     LINK_FAILED
   }
@@ -77,6 +84,8 @@ module Hass {
     hidden var _pairing = false;     // this connection may create a bond (user chose Pair)
     hidden var _encWaitStarted = 0;
     hidden var _cccdRetried = false;
+    hidden var _approvalStarted = 0;
+    hidden var _helloAt = 0;
     hidden var _svcUuid;
     hidden var _cmdUuid;
     hidden var _evtUuid;
@@ -104,30 +113,40 @@ module Hass {
       return _state == LINK_READY;
     }
 
-    // Parses the 32-hex-digit shared secret from the app settings.
-    // Returns false when it is missing or malformed.
+    // Loads the per-watch key HA issued (MSG_KEY); null until approved.
     function loadKey() {
-      var hex = App.Properties.getValue("secret");
+      var hex = App.Storage.getValue(STORAGE_KEY);
       _key = null;
-      if (hex == null || hex.length() != 32) {
-        return false;
+      if (hex instanceof Lang.String && hex.length() == 32) {
+        try {
+          _key = StringUtil.convertEncodedString(hex, {
+            :fromRepresentation => StringUtil.REPRESENTATION_STRING_HEX,
+            :toRepresentation => StringUtil.REPRESENTATION_BYTE_ARRAY
+          });
+        } catch (e) {
+          _key = null;
+        }
       }
-      try {
-        _key = StringUtil.convertEncodedString(hex.toLower(), {
-          :fromRepresentation => StringUtil.REPRESENTATION_STRING_HEX,
-          :toRepresentation => StringUtil.REPRESENTATION_BYTE_ARRAY
-        });
-      } catch (e) {
-        _key = null;
-      }
-      return _key != null && _key.size() == 16;
+      return _key != null;
+    }
+
+    hidden function _storeKey(key) {
+      _key = key;
+      App.Storage.setValue(STORAGE_KEY, StringUtil.convertEncodedString(key, {
+        :fromRepresentation => StringUtil.REPRESENTATION_BYTE_ARRAY,
+        :toRepresentation => StringUtil.REPRESENTATION_STRING_HEX
+      }));
+    }
+
+    function forgetKey() {
+      _key = null;
+      App.Storage.deleteValue(STORAGE_KEY);
     }
 
     // Starts (or resumes) the connection sequence. Safe to call repeatedly.
     // pairing == true only when the user asked to pair (MENU > Pair): only
-    // then may an unbonded link request a bond, because HA refuses pairing
-    // outside its pairing mode and a Fenix 7 restarted itself once after a
-    // refused pairing.
+    // then may an unbonded link request a bond (a Fenix 7 restarted itself
+    // once after a refused pairing, so bonding is never started silently).
     function start(pairing) {
       if (pairing) {
         _pairing = true;
@@ -135,10 +154,7 @@ module Hass {
       if (_state != LINK_IDLE && _state != LINK_FAILED) {
         return;
       }
-      if (!loadKey()) {
-        _fail(BleError.BLE_NO_SECRET);
-        return;
-      }
+      loadKey();
       Ble.setDelegate(self);
       _setSecureStrategy();
       _logSystemDevices();
@@ -263,6 +279,14 @@ module Hass {
       if (_state == LINK_BONDING && now - _connectStarted > BOND_WAIT_MS) {
         Utils.debugLog("BLE: pairing timed out", null, null);
         _fail(BleError.BLE_PAIR_FAILED);
+        return;
+      }
+      if (_state == LINK_APPROVAL) {
+        if (now - _approvalStarted > APPROVAL_WAIT_MS) {
+          _fail(BleError.BLE_NOT_APPROVED);
+        } else if (now - _helloAt > APPROVAL_POLL_MS) {
+          _hello();
+        }
         return;
       }
       if (_state == LINK_ENCRYPTING && now - _encWaitStarted > ENCRYPTION_WAIT_MS) {
@@ -521,9 +545,18 @@ module Hass {
         _fail(_securityStatus(status) ? BleError.BLE_NOT_PAIRED : BleError.BLE_CONNECT_FAILED);
         return;
       }
-      _setState(LINK_HELLO);
-      Utils.debugLog("BLE: subscribed, HELLO", null, null);
-      _queueRaw([OP_HELLO, 1]b);
+      Utils.debugLog("BLE: subscribed, HELLO key=", _key != null, null);
+      _approvalStarted = System.getTimer();
+      _hello();
+    }
+
+    // HELLO: version, flags (bit 0: this watch already has its key)
+    hidden function _hello() {
+      if (_state != LINK_APPROVAL) {
+        _setState(LINK_HELLO);
+      }
+      _helloAt = System.getTimer();
+      _queueRaw([OP_HELLO, PROTOCOL_VERSION, _key != null ? 1 : 0]b);
     }
 
     function onCharacteristicWrite(characteristic, status) {
@@ -551,13 +584,45 @@ module Hass {
       if (msg.size() == 0) {
         return;
       }
-      if (msg[0] == MSG_RESULT && _state == LINK_HELLO && msg.size() >= 3 && msg[2] == ST_NOT_PAIRED) {
-        // HA does not know this watch (bond missing on HA's side, or the
-        // watch was forgotten there)
-        _fail(BleError.BLE_NOT_PAIRED);
+      var hello = _state == LINK_HELLO || _state == LINK_APPROVAL;
+      if (msg[0] == MSG_RESULT && hello && msg.size() >= 3) {
+        if (msg[2] == ST_NOT_APPROVED) {
+          // bonded, waiting for the user to approve this watch in HA
+          if (_state != LINK_APPROVAL) {
+            Utils.debugLog("BLE: waiting for approval in HA", null, null);
+            _setState(LINK_APPROVAL);
+          }
+          return;
+        }
+        // NOT_PAIRED: HA does not know this watch (bond missing on HA's
+        // side, or the watch was forgotten there); anything else: protocol
+        forgetKey();
+        _fail(msg[2] == ST_NOT_PAIRED ? BleError.BLE_NOT_PAIRED : BleError.BLE_PROTOCOL);
         return;
       }
-      if (msg[0] == MSG_CHALLENGE && _state == LINK_HELLO) {
+      if (msg[0] == MSG_KEY && hello) {
+        if (msg.size() >= 17) {
+          Utils.debugLog("BLE: key received", null, null);
+          _storeKey(msg.slice(1, 17));
+        }
+        return;
+      }
+      if (msg[0] == MSG_RESULT && _state == LINK_READY && msg.size() >= 3 && msg[2] == ST_BAD_AUTH) {
+        // key out of date (watch forgotten and approved again in HA): drop
+        // it and ask again; HA only hands it out over this bonded link
+        Utils.debugLog("BLE: bad auth, renewing key", null, null);
+        forgetKey();
+        _listener.onMessage(msg);
+        _nonce = null;
+        _hello();
+        _listener.onLinkDown();
+        return;
+      }
+      if (msg[0] == MSG_CHALLENGE && hello) {
+        if (_key == null) {
+          _fail(BleError.BLE_PROTOCOL);
+          return;
+        }
         if (msg.size() < 11) {
           _fail(BleError.BLE_PROTOCOL);
           return;

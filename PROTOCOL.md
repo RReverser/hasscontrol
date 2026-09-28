@@ -1,4 +1,4 @@
-# HassControl BLE protocol (v1)
+# HassControl BLE protocol (v2)
 
 The watch talks to Home Assistant directly over Bluetooth Low Energy. Home
 Assistant (the `garmin_ble` custom integration in `custom_components/`) is the
@@ -10,36 +10,43 @@ Every frame in both directions fits in **20 bytes**. Connect IQ throws
 does not implement long reads or long writes, and the ATT MTU on the watch is
 not negotiable from Connect IQ, so notifications are also kept to 20 bytes.
 
-## Pairing (required)
+## Pairing and approval (required)
 
-The link must be encrypted with a key from LE Secure Connections pairing
-using Numeric Comparison, and the watch must be approved in HA:
-
-1. In HA, press **Pair watch** (pairing mode, 120 s).
-2. The watch requests pairing. BlueZ asks the integration to confirm the
-   6-digit code; HA shows it (notification and the *Watch pairing* sensor)
-   and waits up to 25 s for **Confirm watch pairing**. The watch shows the
-   same code and the user confirms there as well.
-3. On confirmation HA stores the watch's address as approved.
+1. On the watch choose **Pair**. The watch bonds with HA using standard
+   LE Secure Connections pairing with Numeric Comparison; the user confirms
+   the 6-digit code on the watch. HA accepts the bond at once and records the
+   code. A bond alone grants nothing.
+2. HA opens a discovery flow under Settings > Devices & services:
+   "Allow Garmin watch XX:XX:XX:XX:XX:XX?" with the same code. It can be
+   approved at any time; until then HELLO gets RESULT NOT_APPROVED and the
+   watch keeps retrying.
+3. On approval HA generates a random 16-byte command key for that watch.
+   The next HELLO from the watch without a stored key gets MSG_KEY (over the
+   encrypted link) before the CHALLENGE. The watch stores it; every command
+   is signed with it. No secret is entered anywhere.
 
 Enforcement on HA: CMD is `secure-write` and EVT's CCCD `secure-notify`
-(BlueZ rejects both on links without an LE Secure Connections key), HELLO
-from an address that is not approved gets RESULT NOT_PAIRED, pairing
-outside pairing mode, without HA confirmation, or with Just Works is
-refused. **Forget paired watches** removes approvals and bonds.
+(BlueZ rejects both on links without an LE Secure Connections key); Just
+Works pairing is refused; HELLO from an address that is not approved gets
+NOT_PAIRED or NOT_APPROVED; a new bond for an approved address drops the
+approval and asks again. The integration's options list approved and
+waiting watches and can forget them (approval, key and bond removed).
+
+HA cannot start pairing itself: Connect IQ apps can only act as a BLE
+central, so the watch never advertises anything HA could connect to.
 
 ## GATT layout
 
 | Item | UUID | Properties |
 |---|---|---|
 | Service | `6a1e0001-4c7d-4b4e-9a2b-3c8f1d2e5a01` | primary, advertised |
-| CMD characteristic (watch to HA) | `6a1e0002-4c7d-4b4e-9a2b-3c8f1d2e5a01` | write (with response) |
-| EVT characteristic (HA to watch) | `6a1e0003-4c7d-4b4e-9a2b-3c8f1d2e5a01` | notify |
+| CMD characteristic (watch to HA) | `6a1e0002-4c7d-4b4e-9a2b-3c8f1d2e5a01` | write (with response), encrypted + authenticated link required |
+| EVT characteristic (HA to watch) | `6a1e0003-4c7d-4b4e-9a2b-3c8f1d2e5a01` | notify, encrypted + authenticated link required to subscribe |
 
 The advertisement carries the 128-bit service UUID; the local name `HA-Watch`
-goes in the scan response. The characteristics require **no encryption and no
-pairing**. Security comes from the application-layer MAC below, so the watch
-never triggers a bonding prompt.
+goes in the scan response. The characteristics need a bonded, encrypted link
+(see above); the application-layer MAC below additionally binds every command
+to the per-watch key and the session.
 
 Only one central can be connected at a time on the tested controller: while a
 watch is connected the advertisement is not visible to others. HA therefore
@@ -59,7 +66,7 @@ last 4 bytes  tag = HMAC-SHA256(key, nonce || ctr_be32 || op || payload)[0:4]
 
 | op | name | payload | HA reply |
 |---|---|---|---|
-| 0x01 | HELLO | `version u8` (= 1) | CHALLENGE |
+| 0x01 | HELLO | `version u8` (= 2), `flags u8` (bit 0: watch has a key) | KEY if the watch has none, then CHALLENGE; or RESULT |
 | 0x02 | LIST | (none) | ENTITY per exposed entity, then LIST_END |
 | 0x03 | GET | `idx u8` | ENTITY |
 | 0x04 | ACTION | `idx u8, action u8, arg...` | RESULT, then ENTITY with the new state when it changes |
@@ -95,7 +102,8 @@ rejected with status `NOT_ALLOWED`.
    reconstructs it as the smallest value greater than the last accepted one
    with that low byte, and accepts it only if it is at most 32 ahead, so a
    lost write does not wedge the session but an old frame cannot be replayed.
-4. `key` is the 16-byte shared secret, entered on the watch as 32 hex digits.
+4. `key` is the 16-byte per-watch key HA issued with MSG_KEY. On BAD_AUTH
+   the watch drops its key and sends HELLO without the key flag.
 
 HA to watch messages are not authenticated (a spoofed state display is the
 worst outcome); commands are.
@@ -118,6 +126,7 @@ it sees the last-fragment bit.
 | 0x82 | ENTITY | `idx u8` then TLV fields |
 | 0x83 | LIST_END | `count u8` |
 | 0x84 | RESULT | `ctr8 u8, status u8` |
+| 0x85 | KEY | `key[16]` (answer to HELLO without the key flag) |
 
 ENTITY TLV fields are `tag u8, len u8, UTF-8 bytes` (each string cut to 255
 bytes):
@@ -139,8 +148,10 @@ Fields that are absent are omitted. Entity indices are stable for the
 connection (entities sorted by entity_id when the connection authenticates).
 
 RESULT status codes: 0 OK, 1 BAD_AUTH, 2 BAD_INDEX, 3 NOT_ALLOWED,
-4 SERVICE_ERROR, 5 BAD_FRAME, 6 NO_SESSION, 7 NOT_PAIRED (answer to HELLO
-from a device that is not an approved watch, with ctr8 0).
+4 SERVICE_ERROR, 5 BAD_FRAME (also HELLO with another protocol version),
+6 NO_SESSION, 7 NOT_PAIRED (HELLO from an unknown device), 8 NOT_APPROVED
+(HELLO from a bonded watch still waiting for approval in HA). HELLO answers
+use ctr8 0.
 
 After authentication HA also pushes an ENTITY message whenever an exposed
 entity changes state, so the watch does not need to poll.

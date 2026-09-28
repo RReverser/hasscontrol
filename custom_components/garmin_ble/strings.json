@@ -3,32 +3,32 @@
     "step": {
       "user": {
         "title": "Garmin watch over BLE",
-        "description": "Home Assistant will advertise a Bluetooth service on this adapter. Entities carrying the label below are exposed to the watch.",
+        "description": "Home Assistant advertises a Bluetooth service on this adapter. Entities carrying the label below are exposed to paired watches. To add a watch, choose Pair in the HassControl BLE app; it then shows up here for approval.",
         "data": {
           "label": "Label of exposed entities",
           "adapter": "Bluetooth adapter",
-          "idle_timeout": "Disconnect idle watch after (seconds)",
-          "secret": "Shared secret (32 hex digits, leave empty to generate)"
+          "idle_timeout": "Disconnect idle watch after (seconds)"
         }
       },
-      "secret": {
-        "title": "Copy this secret to the watch",
-        "description": "Enter this value as \"Shared secret\" in the HassControl BLE app settings (Garmin Connect app > Connect IQ > HassControl BLE > Settings):\n\n`{secret}`\n\nIt stays stored in this integration's configuration."
+      "approve": {
+        "title": "Allow Garmin watch {address}?",
+        "description": "The watch {address} paired over Bluetooth with code **{code}**. Allow it only if your watch showed the same code. It can then control the entities you exposed."
       }
     },
-    "error": {
-      "bad_secret": "The secret must be exactly 32 hexadecimal digits."
-    },
     "abort": {
-      "already_configured": "This adapter is already configured."
-    }
+      "already_configured": "This adapter is already configured.",
+      "watch_approved": "Watch approved.",
+      "not_pending": "This watch is no longer waiting for approval."
+    },
+    "flow_title": "Garmin watch {address}"
   },
   "options": {
     "step": {
       "init": {
         "data": {
           "label": "Label of exposed entities",
-          "idle_timeout": "Disconnect idle watch after (seconds)"
+          "idle_timeout": "Disconnect idle watch after (seconds)",
+          "forget": "Forget these watches"
         }
       }
     }

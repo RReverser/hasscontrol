@@ -16,7 +16,6 @@ from .const import (
     CONF_ADAPTER,
     CONF_IDLE_TIMEOUT,
     CONF_LABEL,
-    CONF_SECRET,
     DEFAULT_ADAPTER,
     DEFAULT_IDLE_TIMEOUT,
     DEFAULT_LABEL,
@@ -25,7 +24,7 @@ from .const import (
 from .server import GarminBleServer
 
 _LOGGER = logging.getLogger(__name__)
-PLATFORMS = [Platform.BUTTON, Platform.SENSOR]
+PLATFORMS = [Platform.SENSOR]
 
 
 def _opt(entry: ConfigEntry, key: str, default):
@@ -36,7 +35,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     server = GarminBleServer(
         hass,
         entry.entry_id,
-        key=bytes.fromhex(entry.data[CONF_SECRET]),
         label=_opt(entry, CONF_LABEL, DEFAULT_LABEL),
         adapter=_opt(entry, CONF_ADAPTER, DEFAULT_ADAPTER),
         idle_timeout=int(_opt(entry, CONF_IDLE_TIMEOUT, DEFAULT_IDLE_TIMEOUT)),

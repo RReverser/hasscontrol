@@ -1,6 +1,5 @@
 <resources>
     <properties>
-        <property id="secret" type="string"></property>
         <property id="scenes" type="string"></property>
         <property id="refresh" type="boolean">false</property>
         <property id="reportBattery" type="boolean">true</property>
@@ -11,7 +10,6 @@
     </properties>
 
     <strings>
-       <string id="secret_title">Shared secret (32 hex digits, shown when adding the Garmin BLE integration in Home Assistant)</string>
        <string id="scenes_title">Scene name overrides: (scene1=Name,scene2)</string>
        <string id="refresh_title">Refresh on show</string>
        <string id="reportBattery_title">Report watch battery to Home Assistant</string>
@@ -22,9 +20,6 @@
     </strings>
 
     <settings>
-        <setting propertyKey="@Properties.secret" title="@Strings.secret_title">
-            <settingConfig type="alphaNumeric" />
-        </setting>
         <setting propertyKey="@Properties.scenes" title="@Strings.scenes_title">
             <settingConfig type="alphaNumeric" />
         </setting>

@@ -2,7 +2,6 @@ using Toybox.WatchUi as Ui;
 
 module Hass {
   class BleError extends Error {
-    static const BLE_NO_SECRET = 100;
     static const BLE_UNSUPPORTED = 101;
     static const BLE_NOT_FOUND = 102;
     static const BLE_CONNECT_FAILED = 103;
@@ -15,13 +14,12 @@ module Hass {
     static const BLE_UNKNOWN_ENTITY = 110;
     static const BLE_NOT_PAIRED = 111;
     static const BLE_PAIR_FAILED = 112;
+    static const BLE_NOT_APPROVED = 113;
 
     function initialize(bleCode) {
       Error.initialize(Error.ERROR_UNKNOWN);
       code = bleCode;
-      if (bleCode == BLE_NO_SECRET) {
-        message = Rez.Strings.Error_Ble_NoSecret;
-      } else if (bleCode == BLE_UNSUPPORTED) {
+      if (bleCode == BLE_UNSUPPORTED) {
         message = Rez.Strings.Error_Ble_Unsupported;
       } else if (bleCode == BLE_NOT_FOUND || bleCode == BLE_CONNECT_FAILED) {
         message = Rez.Strings.Error_Ble_NotFound;
@@ -39,6 +37,8 @@ module Hass {
         message = Rez.Strings.Error_Ble_NotPaired;
       } else if (bleCode == BLE_PAIR_FAILED) {
         message = Rez.Strings.Error_Ble_PairFailed;
+      } else if (bleCode == BLE_NOT_APPROVED) {
+        message = Rez.Strings.Error_Ble_NotApproved;
       } else {
         message = Rez.Strings.Error_Unknown;
       }

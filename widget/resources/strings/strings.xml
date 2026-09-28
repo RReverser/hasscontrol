@@ -3,8 +3,8 @@
 
 
     <!-- Entity List -->
-    <string id="NoEntities">No entities configured</string>
-    <string id="NotPaired">Not paired.\nIn HA press\nPair watch, then\nMENU &gt; Pair</string>
+    <string id="NoEntities">No entities</string>
+    <string id="NotPaired">Not paired</string>
 
 
 
@@ -20,14 +20,14 @@
     <string id="Error_Auth_NotReachable">Server not reachable</string>
     <string id="Error_Auth_Revoked">Login Revoked</string>
 
-    <string id="Error_Ble_NoSecret">Set shared\nsecret in\nsettings</string>
-    <string id="Error_Ble_Unsupported">Bluetooth LE\nnot available</string>
-    <string id="Error_Ble_NotFound">Home Assistant\nnot in range</string>
-    <string id="Error_Ble_Timeout">Bluetooth\ntimeout</string>
-    <string id="Error_Ble_BadAuth">Secret\nrejected</string>
+    <string id="Error_Ble_Unsupported">No Bluetooth</string>
+    <string id="Error_Ble_NotFound">Out of range</string>
+    <string id="Error_Ble_Timeout">Timed out</string>
+    <string id="Error_Ble_BadAuth">Auth failed</string>
     <string id="Error_Ble_NotAllowed">Not allowed</string>
-    <string id="Error_Ble_Service">Action failed\nin HA</string>
-    <string id="Error_Ble_UnknownEntity">Entity not\nexposed</string>
-    <string id="Error_Ble_NotPaired">Not paired.\nIn HA press\nPair watch, then\nMENU &gt; Pair</string>
-    <string id="Error_Ble_PairFailed">Pairing failed.\nIs HA in\npairing mode?</string>
+    <string id="Error_Ble_Service">Action failed</string>
+    <string id="Error_Ble_UnknownEntity">Not exposed</string>
+    <string id="Error_Ble_NotPaired">Not paired</string>
+    <string id="Error_Ble_PairFailed">Pairing failed</string>
+    <string id="Error_Ble_NotApproved">Not approved</string>
 </strings>
