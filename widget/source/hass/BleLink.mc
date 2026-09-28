@@ -81,7 +81,8 @@ module Hass {
     hidden var _connectTries = 0;
     hidden var _cccd = null;
     hidden var _discoveryStarted = 0;
-    hidden var _rebonded = false;    // stale bond already dropped once this attempt
+    hidden var _rebonded = false;
+    hidden var _unbonded = false;    // the connected HA had no bond: this link pairs    // stale bond already dropped once this attempt
     hidden var _encWaitStarted = 0;
     hidden var _cccdRetried = false;
     hidden var _approvalStarted = 0;
@@ -107,6 +108,11 @@ module Hass {
         _state = s;
         _listener.onLinkStatus(s);
       }
+    }
+
+    // true while the current link has to pair first (for the progress text)
+    function isPairing() {
+      return _unbonded;
     }
 
     function isReady() {
@@ -227,6 +233,7 @@ module Hass {
       _ctr = 0;
       _reasm = new Reassembler();
       _cccdRetried = false;
+      _unbonded = false;
       if (newState == LINK_READY || newState == LINK_FAILED) {
         _rebonded = false;
       }
@@ -361,6 +368,7 @@ module Hass {
         }
         Ble.setScanState(Ble.SCAN_STATE_OFF);
         _device = device;
+        _unbonded = !((device has :isBonded) && device.isBonded());
         Utils.debugLog("BLE: connected after tries=", _connectTries, null);
         _connectTries = 0;
         _secure(device);

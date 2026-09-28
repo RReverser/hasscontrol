@@ -46,6 +46,7 @@ module Hass {
     hidden var _timer = null;
     hidden var _timerRunning = false;
     hidden var _connectDeadline = null;
+    hidden var _statusText = null;
 
     function initialize() {
       _link = new BleLink(self);
@@ -89,20 +90,25 @@ module Hass {
       _ensureTick();
     }
 
+    // Progress text, one step per thing the user can relate to:
+    // Searching (finding HA) -> Pairing (only when this link has no bond)
+    // or Connecting (bonded) -> HA approval (only while HA waits for it).
     function onLinkStatus(state) {
       var text = null;
       if (!_ready && _ops.size() > 0) {
-        if (state == LINK_REGISTERING || state == LINK_SCANNING) {
+        if (state == LINK_REGISTERING || state == LINK_SCANNING || state == LINK_CONNECTING) {
           text = "Searching";
-        } else if (state == LINK_BONDING) {
-          text = "Pairing";
         } else if (state == LINK_APPROVAL) {
           text = "HA approval";
-        } else if (state == LINK_CONNECTING || state == LINK_DISCOVERING || state == LINK_ENCRYPTING
+        } else if (state == LINK_BONDING || state == LINK_DISCOVERING || state == LINK_ENCRYPTING
                    || state == LINK_SUBSCRIBING || state == LINK_HELLO) {
-          text = "Connecting";
+          text = _link.isPairing() ? "Pairing" : "Connecting";
         }
       }
+      if (text == null ? _statusText == null : text.equals(_statusText)) {
+        return;  // same step: no redraw
+      }
+      _statusText = text;
       Hass.onLinkStatus(text);
     }
 
