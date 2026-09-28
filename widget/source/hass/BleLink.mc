@@ -31,7 +31,7 @@ module Hass {
   const ENCRYPTION_WAIT_MS = 5000;  // bonded link: LTK encryption after connect
   const APPROVAL_WAIT_MS = 600000;  // how long the app waits for approval in HA
   const APPROVAL_POLL_MS = 3000;    // HELLO retry while waiting for approval
-  const STORAGE_KEY = "ble/key";    // per-watch command key from HA, hex
+  const STORAGE_BLE_KEY = "ble/key";    // per-watch command key from HA, hex
   const PROTOCOL_VERSION = 2;
 
   const MSG_CHALLENGE = 0x81;
@@ -115,7 +115,7 @@ module Hass {
 
     // Loads the per-watch key HA issued (MSG_KEY); null until approved.
     function loadKey() {
-      var hex = App.Storage.getValue(STORAGE_KEY);
+      var hex = App.Storage.getValue(STORAGE_BLE_KEY);
       _key = null;
       if (hex instanceof Lang.String && hex.length() == 32) {
         try {
@@ -132,7 +132,7 @@ module Hass {
 
     hidden function _storeKey(key) {
       _key = key;
-      App.Storage.setValue(STORAGE_KEY, StringUtil.convertEncodedString(key, {
+      App.Storage.setValue(STORAGE_BLE_KEY, StringUtil.convertEncodedString(key, {
         :fromRepresentation => StringUtil.REPRESENTATION_BYTE_ARRAY,
         :toRepresentation => StringUtil.REPRESENTATION_STRING_HEX
       }));
@@ -140,7 +140,7 @@ module Hass {
 
     function forgetKey() {
       _key = null;
-      App.Storage.deleteValue(STORAGE_KEY);
+      App.Storage.deleteValue(STORAGE_BLE_KEY);
     }
 
     // Starts (or resumes) the connection sequence. Safe to call repeatedly.
