@@ -66,6 +66,7 @@ class GarminBleServer:
         self._frag = p.Fragmenter()
         self._unsubs: list = []
         self._unsub_state = None
+        self._pair_until = 0.0
         self.periph = BlePeripheral(adapter, self._on_write, self._on_device, _Pairing(self))
 
     # ---- lifecycle -------------------------------------------------------
@@ -83,6 +84,16 @@ class GarminBleServer:
         for dev in list(self._conns):
             await self.periph.disconnect(dev)
         await self.periph.stop()
+
+    # ---- pairing -----------------------------------------------------------
+    def allow_pairing(self, seconds: int) -> None:
+        """Accept BLE pairing requests for the next `seconds` (0 closes the window)."""
+        self._pair_until = time.monotonic() + seconds if seconds > 0 else 0.0
+        _LOGGER.info("pairing window %s", f"open for {seconds}s" if seconds > 0 else "closed")
+
+    @property
+    def pairing_open(self) -> bool:
+        return time.monotonic() < self._pair_until
 
     # ---- exposure --------------------------------------------------------
     def _refresh_entities(self) -> None:
@@ -216,14 +227,9 @@ class GarminBleServer:
 
 
 class _Pairing(PairingHandler):
-    """Pairing policy: accept every request and show the 6-digit code as a
-    persistent notification.
-
-    A bond only gives a watch an encrypted link; every command still has to
-    carry a valid HMAC made with the shared secret, so accepting is safe.
-    Rejecting was not: a Fenix 7 (fw 27.18) whose pairing HA refused
-    restarted itself.
-    """
+    """Pairing policy: accept only while the window opened by the
+    garmin_ble.allow_pairing action is open, and show the 6-digit code as a
+    persistent notification so it can be compared with the watch."""
 
     def __init__(self, server: GarminBleServer) -> None:
         self._s = server
@@ -233,12 +239,15 @@ class _Pairing(PairingHandler):
             self._s.hass, message, title=title, notification_id=f"{DOMAIN}_pairing")
 
     async def confirm(self, device: str, passkey: int | None, kind: str) -> bool:
+        ok = self._s.pairing_open
         code = f"{passkey:06d}" if passkey is not None else "none (Just Works)"
-        _LOGGER.info("pairing request %s from %s, code %s: accepted", kind, device, code)
+        _LOGGER.info("pairing request %s from %s, code %s: %s", kind, device, code,
+                     "accepted" if ok else "rejected (window closed)")
         self._notify("Garmin watch pairing",
                      f"Method: {kind}\nCode: {code}\nDevice: {device}\n"
-                     "Check that the watch shows the same code.")
-        return True
+                     + ("Accepted: check that the watch shows the same code." if ok
+                        else "Rejected: run the garmin_ble.allow_pairing action first."))
+        return ok
 
     def display(self, device: str, passkey: int) -> None:
         _LOGGER.info("pairing passkey for %s: %06d", device, passkey)
@@ -247,3 +256,4 @@ class _Pairing(PairingHandler):
 
     def cancel(self) -> None:
         persistent_notification.async_dismiss(self._s.hass, f"{DOMAIN}_pairing")
+

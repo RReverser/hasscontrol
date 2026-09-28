@@ -171,11 +171,15 @@ async def test_idle_disconnect(hass_env):
 
 
 @pytest.mark.asyncio
-async def test_pairing_always_accepted(hass_env):
+async def test_pairing_window(hass_env):
     hass, server, _ = await hass_env()
     pairing = server.periph.pairing
     dev = "/org/bluez/hci0/dev_90_F1_57_AB_AA_08"
+    assert await pairing.confirm(dev, 123456, "numeric_comparison") is False
+    server.allow_pairing(60)
     assert await pairing.confirm(dev, 123456, "numeric_comparison") is True
     assert await pairing.confirm(dev, None, "just_works") is True
+    server.allow_pairing(0)
+    assert await pairing.confirm(dev, 42, "numeric_comparison") is False
     await hass.async_block_till_done()
     await hass.async_stop(force=True)
