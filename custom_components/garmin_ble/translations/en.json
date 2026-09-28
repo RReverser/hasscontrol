@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Garmin watch over BLE",
-        "description": "Home Assistant advertises a Bluetooth service on this adapter. Entities carrying the label below are exposed to paired watches. To add a watch, choose Pair in the HassControl BLE app; it then shows up here for approval.",
+        "description": "Home Assistant advertises a Bluetooth service on this adapter.\n\nEntities with the label below are exposed to approved watches.\n\nTo add a watch, open the HassControl BLE app on it. It pairs, then shows up here for approval.",
         "data": {
           "label": "Label of exposed entities",
           "adapter": "Bluetooth adapter",
@@ -12,7 +12,7 @@
       },
       "approve": {
         "title": "Allow Garmin watch {address}?",
-        "description": "The watch {address} paired over Bluetooth with code **{code}**. Allow it only if your watch showed the same code. It can then control the entities you exposed. Unanswered requests expire after 24 hours."
+        "description": "Code: **{code}**\n\nAllow only if your watch showed the same code. The watch can then control the entities you exposed.\n\nUnanswered requests expire after 24 hours."
       }
     },
     "abort": {

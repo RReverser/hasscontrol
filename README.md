@@ -12,7 +12,7 @@
 
 Requirements: HA OS or another install where HA can reach BlueZ over D-Bus, with a local Bluetooth adapter whose controller supports the peripheral role (checked on an Intel USB controller). Bluetooth proxies cannot be used: they only act as centrals.
 
-**Watch side:** build the widget in `widget/` (Connect IQ SDK, permission `BluetoothLowEnergy`), open it and choose **Pair**. Confirm the 6-digit code on the watch; the watch then shows *Approve in HA*. In HA, Settings → Devices & services shows *Garmin watch XX:XX:…* as discovered: open it, check the code matches, submit. The watch picks up its own command key automatically; there is no secret to enter. Watches can be forgotten in the integration's options.
+**Watch side:** build the widget in `widget/` (Connect IQ SDK, permission `BluetoothLowEnergy`), open it (it pairs automatically). Confirm the 6-digit code on the watch; the watch then shows *Approve in HA*. In HA, Settings → Devices & services shows *Garmin watch XX:XX:…* as discovered: open it, check the code matches, submit. The watch picks up its own command key automatically; there is no secret to enter. Watches can be forgotten in the integration's options.
 
 **Behaviour and limits**
 
