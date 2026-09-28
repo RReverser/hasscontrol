@@ -192,7 +192,7 @@ module Hass {
       if (_state != LINK_SCANNING) {
         return;
       }
-      for (var r = scanResults.next(); r != null; r = scanResults.next()) {
+      for (var r = scanResults.next() as Ble.ScanResult?; r != null; r = scanResults.next() as Ble.ScanResult?) {
         var uuids = r.getServiceUuids();
         for (var u = uuids.next(); u != null; u = uuids.next()) {
           if (u.equals(_svcUuid)) {
