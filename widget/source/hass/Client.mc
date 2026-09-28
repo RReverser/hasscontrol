@@ -33,6 +33,7 @@ module Hass {
     hidden var _link;
     hidden var _ready = false;
     hidden var _listing = false;
+    hidden var _listFresh = false; // a LIST completed on this connection and was not consumed yet
     hidden var _cache = {};      // entity_id -> REST-style body
     hidden var _index = {};      // entity_id -> idx for this connection
     hidden var _ids = [];        // exposed ids in HA order
@@ -209,6 +210,11 @@ module Hass {
     hidden function _runGet(op) {
       var id = op[:id];
       if (id.equals(LIST_ID)) {
+        if (op[:listed] == null && _listFresh) {
+          // the list fetched right after connecting is still fresh: use it
+          op[:listed] = true;
+        }
+        _listFresh = false;
         if (op[:listed] == null) {
           // fetch a fresh list, then answer this op from it
           op[:listed] = true;
@@ -273,6 +279,7 @@ module Hass {
 
     function onLinkReady(count) {
       _ready = true;
+      _listFresh = false;
       _connectDeadline = null;
       _cache = {};
       _index = {};
@@ -302,6 +309,7 @@ module Hass {
         _onEntity(msg);
       } else if (t == MSG_LIST_END) {
         _listing = false;
+        _listFresh = true;
         _drain();
       } else if (t == MSG_RESULT && msg.size() >= 3) {
         var p = _pendingCtr[msg[1]];
@@ -395,6 +403,7 @@ module Hass {
 
     function _tick() {
       var now = System.getTimer();
+      _link.checkTimeout(now);
 
       if (_connectDeadline != null && !_ready && now > _connectDeadline) {
         _link.stop();

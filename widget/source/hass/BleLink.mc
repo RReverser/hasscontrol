@@ -24,6 +24,8 @@ module Hass {
   const OP_BATTERY = 0x05;
   const OP_BYE = 0x07;
 
+  const CONNECT_ATTEMPT_MS = 7000;
+
   const MSG_CHALLENGE = 0x81;
   const MSG_ENTITY = 0x82;
   const MSG_LIST_END = 0x83;
@@ -60,6 +62,8 @@ module Hass {
     hidden var _nonce = null;
     hidden var _ctr = 0;
     hidden var _reasm = new Reassembler();
+    hidden var _connectStarted = 0;
+    hidden var _connectTries = 0;
     hidden var _svcUuid;
     hidden var _cmdUuid;
     hidden var _evtUuid;
@@ -176,6 +180,25 @@ module Hass {
       Ble.setScanState(Ble.SCAN_STATE_SCANNING);
     }
 
+    // Called periodically by the client while a connection is pending. A
+    // connect request that the peripheral misses is never retried by the
+    // system, so give up on it after CONNECT_ATTEMPT_MS and scan again: each
+    // new attempt goes out right after a fresh advertisement. Seen against an
+    // Intel BT 4.2 host adapter, where single attempts often never complete.
+    function checkTimeout(now) {
+      if (_state == LINK_CONNECTING && now - _connectStarted > CONNECT_ATTEMPT_MS) {
+        Utils.debugLog("BLE: connect attempt timed out, rescanning; tries=", _connectTries, null);
+        if (_device != null) {
+          try {
+            Ble.unpairDevice(_device);
+          } catch (e) {
+          }
+          _device = null;
+        }
+        _startScan();
+      }
+    }
+
     // ---- BleDelegate callbacks ------------------------------------------
 
     function onProfileRegister(uuid, status) {
@@ -201,6 +224,8 @@ module Hass {
             Ble.setScanState(Ble.SCAN_STATE_OFF);
             _state = LINK_CONNECTING;
             Utils.debugLog("BLE: found HA, rssi=", r.getRssi(), ", connecting");
+            _connectStarted = System.getTimer();
+            _connectTries += 1;
             try {
               _device = Ble.pairDevice(r);
             } catch (e) {
@@ -219,6 +244,8 @@ module Hass {
           return;
         }
         _device = device;
+        Utils.debugLog("BLE: connected after tries=", _connectTries, null);
+        _connectTries = 0;
         var svc = device.getService(_svcUuid);
         if (svc == null) {
           _fail(BleError.BLE_CONNECT_FAILED);
