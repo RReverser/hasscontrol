@@ -1,0 +1,8 @@
+# Text-free BLE probe: runs the real Client/BleLink against Home Assistant and
+# logs to the console. For the Connect IQ simulator with an nRF52 dongle when
+# device fonts are unavailable. Build: monkeyc -f probe.jungle -d fenix7 ...
+project.manifest = probe/manifest.xml
+project.typecheck = 0
+base.sourcePath = source;probe
+base.resourcePath = resources
+base.excludeAnnotations = lowmem
