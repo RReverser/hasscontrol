@@ -1,4 +1,5 @@
 using Toybox.Application as App;
+using Toybox.Communications;
 using Toybox.StringUtil;
 using Toybox.System;
 using Toybox.Timer;
@@ -47,6 +48,7 @@ module Hass {
     hidden var _timerRunning = false;
     hidden var _connectDeadline = null;
     hidden var _statusText = null;
+    hidden var _approvalLinkSent = false;
 
     function initialize() {
       _link = new BleLink(self);
@@ -100,6 +102,7 @@ module Hass {
           text = "Searching";
         } else if (state == LINK_APPROVAL) {
           text = "Approve in HA";
+          _openApprovalOnPhone();
         } else if (state == LINK_BONDING || state == LINK_DISCOVERING || state == LINK_ENCRYPTING
                    || state == LINK_SUBSCRIBING || state == LINK_HELLO) {
           text = _link.isPairing() ? "Pairing" : "Connecting";
@@ -110,6 +113,23 @@ module Hass {
       }
       _statusText = text;
       Hass.onLinkStatus(text);
+    }
+
+    // Once per app run: ask Garmin Connect on the phone for a notification
+    // that opens HA's integrations page (where the approval card is) in the
+    // HA companion app. Needs the phone connected to the watch; without it
+    // this does nothing and the watch keeps waiting as before.
+    hidden function _openApprovalOnPhone() {
+      if (_approvalLinkSent) {
+        return;
+      }
+      _approvalLinkSent = true;
+      try {
+        Communications.openWebPage("homeassistant://navigate/config/integrations/dashboard", null, null);
+        Utils.debugLog("BLE: approval link sent to phone", null, null);
+      } catch (e) {
+        Utils.debugLog("BLE: approval link failed", null, null);
+      }
     }
 
     function shutdown() {
