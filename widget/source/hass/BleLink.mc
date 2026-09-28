@@ -119,7 +119,7 @@ module Hass {
         Ble.registerProfile({
           :uuid => _svcUuid,
           :characteristics => [
-            { :uuid => _cmdUuid, :descriptors => [] },
+            { :uuid => _cmdUuid },  // write-only: no descriptors (an empty list is rejected)
             { :uuid => _evtUuid, :descriptors => [Ble.cccdUuid()] }
           ]
         });
