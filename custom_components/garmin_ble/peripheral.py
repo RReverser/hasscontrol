@@ -115,10 +115,11 @@ class _Advertisement(ServiceInterface):
     def LocalName(self) -> "s":  # noqa: N802
         return LOCAL_NAME
 
-    # The kernel default advertising interval is 1.28 s. Connect IQ centrals
-    # scan with a low duty cycle while connecting, and against 1.28 s adverts
-    # a connection took ~10 s to establish. BlueZ honours these (in ms) when
-    # its experimental interfaces are enabled and ignores them otherwise.
+    # Advertising interval in ms. The kernel default is 1.28 s, against which
+    # a Connect IQ central (simulator + nRF52 dongle) needed ~9-11 s per
+    # connection and often timed out; at 60-100 ms, 11 of 11 probe runs
+    # connected, 2-7 s (median 3 s) after the watch saw the advert. HCI traces on
+    # HA OS confirmed BlueZ applies these values (LE Set Adv Params 0x60/0xa0).
     @dbus_property(access=PropertyAccess.READ)
     def MinInterval(self) -> "u":  # noqa: N802
         return ADV_MIN_INTERVAL_MS
