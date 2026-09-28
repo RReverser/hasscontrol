@@ -211,7 +211,15 @@ module Hass {
       if (_state == LINK_DISCOVERING && _device != null) {
         if (now - _discoveryStarted > DISCOVERY_WAIT_MS) {
           Utils.debugLog("BLE: service never listed", null, null);
-          _fail(BleError.BLE_CONNECT_FAILED);
+          _findServiceElsewhere(_device, true);
+          _secureNext = !_secureNext;
+          try {
+            Ble.unpairDevice(_device);
+          } catch (e) {
+          }
+          _device = null;
+          _setSecureStrategy();
+          _startScan();
         } else {
           _subscribe(_device);
         }
@@ -224,6 +232,8 @@ module Hass {
       }
       if (_state == LINK_CONNECTING && now - _connectStarted > CONNECT_ATTEMPT_MS) {
         Utils.debugLog("BLE: connect attempt timed out, rescanning; tries=", _connectTries, null);
+        _secureNext = !_secureNext;
+        _setSecureStrategy();
         if (_device != null) {
           try {
             Ble.unpairDevice(_device);
@@ -317,6 +327,16 @@ module Hass {
     hidden function _subscribe(device) {
       var svc = device.getService(_svcUuid);
       if (svc == null) {
+        // another Device object for the same peer may carry the services
+        var alt = _findServiceElsewhere(device, _state != LINK_DISCOVERING);
+        if (alt != null) {
+          Utils.debugLog("BLE: using service from another Device object", null, null);
+          _device = alt;
+          device = alt;
+          svc = alt.getService(_svcUuid);
+        }
+      }
+      if (svc == null) {
         if (_state != LINK_DISCOVERING) {
           Utils.debugLog("BLE: service not listed yet, waiting", null, null);
           _setState(LINK_DISCOVERING);
@@ -335,7 +355,9 @@ module Hass {
       var bonded = (device has :isBonded) ? device.isBonded() : false;
       var crashed = App.Storage.getValue(STORAGE_BOND_TRY) == true;
       Utils.debugLog("BLE: bonded=", bonded, " bondGuard=" + crashed);
-      if (BOND && !bonded && !crashed && (device has :requestBond)) {
+      // under SECURE_PAIR_BOND the system pairs by itself; requestBond()
+      // on top of it crashed the app
+      if (BOND && !bonded && !crashed && !_secureActive && (device has :requestBond)) {
         _setState(LINK_BONDING);
         _connectStarted = System.getTimer();
         App.Storage.setValue(STORAGE_BOND_TRY, true);
@@ -371,9 +393,63 @@ module Hass {
       Utils.debugLog("BLE: system paired=", paired, " bonded=" + bonded);
     }
 
+    // Diagnostics for "service never listed" (Fenix 7, bonded link): logs
+    // what the Device objects the system hands out actually contain, and
+    // returns one that has HA's service if the callback's object does not.
+    hidden function _findServiceElsewhere(device, verbose) {
+      if (verbose) {
+        _logDevice("cb", device);
+      }
+      var lists = [Ble.getPairedDevices()];
+      if (Ble has :getBondedDevices) {
+        lists.add(Ble.getBondedDevices());
+      }
+      for (var l = 0; l < lists.size(); l++) {
+        var it = lists[l];
+        for (var d = it.next(); d != null; d = it.next()) {
+          if (verbose) {
+            _logDevice(l == 0 ? "paired" : "bonded", d);
+          }
+          if (d.getService(_svcUuid) != null) {
+            return d;
+          }
+        }
+      }
+      return null;
+    }
+
+    hidden function _logDevice(tag, d) {
+      var n = 0;
+      var names = "";
+      var it = d.getServices();
+      for (var sv = it.next(); sv != null; sv = it.next()) {
+        n += 1;
+        names += " " + sv.getUuid().toString().substring(0, 8);
+      }
+      Utils.debugLog("BLE: dev[" + tag + "] conn=" + d.isConnected()
+        + " bond=" + ((d has :isBonded) ? d.isBonded() : "?")
+        + " name=" + d.getName(), " svcs=" + n, names);
+    }
+
+    // Connection strategy for this attempt. On a Fenix 7 with a bond:
+    // SECURE_PAIR_BOND connects but the service stays unlisted; DEFAULT
+    // (16:30 run) never formed a connection. Each failure mode switches to
+    // the other one for the next attempt, so one run tries both.
+    hidden var _secureNext = true;
+    hidden var _secureActive = false;
+
     hidden function _setSecureStrategy() {
-      if ((Ble has :setConnectionStrategy) && (Ble has :CONNECTION_STRATEGY_DEFAULT)) {
+      if (!(Ble has :setConnectionStrategy)) {
+        return;
+      }
+      if (_secureNext && (Ble has :CONNECTION_STRATEGY_SECURE_PAIR_BOND)) {
+        Ble.setConnectionStrategy(Ble.CONNECTION_STRATEGY_SECURE_PAIR_BOND);
+        _secureActive = true;
+        Utils.debugLog("BLE: strategy=secure", null, null);
+      } else if (Ble has :CONNECTION_STRATEGY_DEFAULT) {
         Ble.setConnectionStrategy(Ble.CONNECTION_STRATEGY_DEFAULT);
+        _secureActive = false;
+        Utils.debugLog("BLE: strategy=default", null, null);
       }
     }
 

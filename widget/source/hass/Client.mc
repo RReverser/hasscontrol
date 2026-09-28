@@ -15,7 +15,7 @@ module Hass {
   const LIST_ID = "ble.exposed";
 
   const REQUEST_TIMEOUT_MS = 10000;
-  const CONNECT_TIMEOUT_MS = 25000;
+  const CONNECT_TIMEOUT_MS = 60000;  // long enough for BleLink to try both connection strategies
   const TICK_MS = 50;
   // Set once a session completed a LIST with HA; cleared by logout.
   const STORAGE_PAIRED = "ble/paired";
