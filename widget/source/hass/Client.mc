@@ -116,16 +116,18 @@ module Hass {
     }
 
     // Once per app run: ask Garmin Connect on the phone for a notification
-    // that opens HA's integrations page (where the approval card is) in the
-    // HA companion app. Needs the phone connected to the watch; without it
-    // this does nothing and the watch keeps waiting as before.
+    // that opens HA's integrations page (where the approval card is). Garmin
+    // Connect opens it in the browser, so custom schemes such as the
+    // companion app's homeassistant:// do not work; the My Home Assistant
+    // link redirects to the user's own instance. Needs the phone connected
+    // to the watch; without it nothing happens and the watch keeps waiting.
     hidden function _openApprovalOnPhone() {
       if (_approvalLinkSent) {
         return;
       }
       _approvalLinkSent = true;
       try {
-        Communications.openWebPage("homeassistant://navigate/config/integrations/dashboard", null, null);
+        Communications.openWebPage("https://my.home-assistant.io/redirect/integrations/", null, null);
         Utils.debugLog("BLE: approval link sent to phone", null, null);
       } catch (e) {
         Utils.debugLog("BLE: approval link failed", null, null);
