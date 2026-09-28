@@ -46,7 +46,6 @@ module Hass {
     hidden var _timer = null;
     hidden var _timerRunning = false;
     hidden var _connectDeadline = null;
-    hidden var _pairNext = false;
 
     function initialize() {
       _link = new BleLink(self);
@@ -70,9 +69,8 @@ module Hass {
       return App.Storage.getValue(STORAGE_PAIRED) == true;
     }
 
-    // Pairing (MENU > Pair): the only request allowed to create a bond.
+    // Connect (pairing first if needed) and complete a session with HA.
     function login(callback) {
-      _pairNext = true;
       _enqueue({ :k => :login, :cb => callback });
     }
 
@@ -193,8 +191,7 @@ module Hass {
         if (_connectDeadline == null) {
           _connectDeadline = System.getTimer() + CONNECT_TIMEOUT_MS;
         }
-        _link.start(_pairNext);
-        _pairNext = false;
+        _link.start();
       }
       _ensureTick();
     }
@@ -327,7 +324,7 @@ module Hass {
       _failPending(new BleError(BleError.BLE_TIMEOUT));
       if (_ops.size() > 0) {
         _connectDeadline = System.getTimer() + CONNECT_TIMEOUT_MS;
-        _link.start(false);
+        _link.start();
       }
     }
 

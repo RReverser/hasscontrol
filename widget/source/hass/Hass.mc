@@ -89,11 +89,14 @@ module Hass {
     client.later(Utils.method(Hass, :_afterFirstShow));
   }
 
-  // Unpaired: nothing is started. Pairing needs HA in pairing mode first
-  // (HA refuses it otherwise), so it only runs from MENU > Pair.
+  // Unpaired: start pairing right away (HA accepts the bond and asks for
+  // approval); the loader shows each step.
   function _afterFirstShow(err, data) {
     if (_linkText != null) {
       onLinkStatus(_linkText);
+    }
+    if (!App.getApp().isLoggedIn()) {
+      App.getApp().login();
     }
   }
 

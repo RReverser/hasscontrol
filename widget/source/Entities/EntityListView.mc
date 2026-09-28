@@ -108,9 +108,10 @@ class EntityListDelegate extends Ui.BehaviorDelegate {
       if (!handleExtendedEntityTypes(entity)) {
         _mController.toggleEntity(entity);
       }
+    } else if (!App.getApp().isLoggedIn()) {
+      App.getApp().login();  // empty "Not paired" screen: pair
     } else {
-      App.getApp().menu.showRootMenu();
-      App.getApp().viewController.showError("No entity to toggle,\nplease refresh group\nfrom settings");
+      Hass.importEntities(true);  // empty "No entities" screen: fetch again
     }
 
     return true;

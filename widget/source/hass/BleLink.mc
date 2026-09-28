@@ -81,7 +81,7 @@ module Hass {
     hidden var _connectTries = 0;
     hidden var _cccd = null;
     hidden var _discoveryStarted = 0;
-    hidden var _pairing = false;     // this connection may create a bond (user chose Pair)
+    hidden var _rebonded = false;    // stale bond already dropped once this attempt
     hidden var _encWaitStarted = 0;
     hidden var _cccdRetried = false;
     hidden var _approvalStarted = 0;
@@ -144,13 +144,9 @@ module Hass {
     }
 
     // Starts (or resumes) the connection sequence. Safe to call repeatedly.
-    // pairing == true only when the user asked to pair (MENU > Pair): only
-    // then may an unbonded link request a bond (a Fenix 7 restarted itself
-    // once after a refused pairing, so bonding is never started silently).
-    function start(pairing) {
-      if (pairing) {
-        _pairing = true;
-      }
+    // An unbonded link pairs right away: HA accepts every bond and asks for
+    // approval separately.
+    function start() {
       if (_state != LINK_IDLE && _state != LINK_FAILED) {
         return;
       }
@@ -186,13 +182,38 @@ module Hass {
         }
       }
       Ble.setScanState(Ble.SCAN_STATE_OFF);
-      if (_device != null) {
+      _release();
+      _reset(LINK_IDLE);
+    }
+
+    // Drops our hold on the device. Ble.unpairDevice() also deletes the
+    // system bond (Fenix 7: bonded=1 before, 0 right after a failure path
+    // called it), so a bonded HA is left alone; HA drops the idle link.
+    hidden function _release() {
+      if (_device != null && !((_device has :isBonded) && _device.isBonded())) {
         try {
           Ble.unpairDevice(_device);
         } catch (e) {
         }
       }
+    }
+
+    // The watch's bond is stale (HA forgot this watch or lost its keys):
+    // delete it and pair again, once per attempt. HA then asks for approval.
+    hidden function _repair() {
+      if (_rebonded || _device == null) {
+        return false;
+      }
+      _rebonded = true;
+      Utils.debugLog("BLE: stale bond, pairing again", null, null);
+      forgetKey();
+      try {
+        Ble.unpairDevice(_device);
+      } catch (e) {
+      }
       _reset(LINK_IDLE);
+      start();
+      return true;
     }
 
     hidden function _reset(newState) {
@@ -207,7 +228,7 @@ module Hass {
       _reasm = new Reassembler();
       _cccdRetried = false;
       if (newState == LINK_READY || newState == LINK_FAILED) {
-        _pairing = false;
+        _rebonded = false;
       }
     }
 
@@ -215,12 +236,7 @@ module Hass {
       Utils.debugLog("BLE: fail code=", code, null);
       Utils.saveLog();
       Ble.setScanState(Ble.SCAN_STATE_OFF);
-      if (_device != null) {
-        try {
-          Ble.unpairDevice(_device);
-        } catch (e) {
-        }
-      }
+      _release();
       _reset(LINK_FAILED);
       _listener.onLinkError(code);
     }
@@ -296,13 +312,8 @@ module Hass {
       }
       if (_state == LINK_CONNECTING && now - _connectStarted > CONNECT_ATTEMPT_MS) {
         Utils.debugLog("BLE: connect attempt timed out, rescanning; tries=", _connectTries, null);
-        if (_device != null) {
-          try {
-            Ble.unpairDevice(_device);
-          } catch (e) {
-          }
-          _device = null;
-        }
+        _release();
+        _device = null;
         _startScan();
       }
     }
@@ -353,6 +364,9 @@ module Hass {
         Utils.debugLog("BLE: connected after tries=", _connectTries, null);
         _connectTries = 0;
         _secure(device);
+      } else if (_state == LINK_SCANNING || _state == LINK_REGISTERING) {
+        // late disconnect of a device already let go (e.g. after _repair())
+        return;
       } else if (_state != LINK_IDLE) {
         // HA dropped us (idle timeout) or radio lost: next request reconnects
         _reset(LINK_IDLE);
@@ -408,17 +422,13 @@ module Hass {
       }
       var bonded = (device has :isBonded) ? device.isBonded() : false;
       var guard = App.Storage.getValue(STORAGE_BOND_TRY) == true;
-      Utils.debugLog("BLE: bonded=", bonded, " pairing=" + _pairing + " bondGuard=" + guard);
+      Utils.debugLog("BLE: bonded=", bonded, " bondGuard=" + guard);
       if (bonded) {
         // HA's characteristics need an encrypted link; the system encrypts
         // bonded links with the stored key (HA also sends a security
         // request). A subscription that races ahead of it is retried from
         // onDescriptorWrite.
         _enableNotify();
-        return;
-      }
-      if (!_pairing) {
-        _fail(BleError.BLE_NOT_PAIRED);
         return;
       }
       if (guard || !(device has :requestBond)) {
@@ -542,7 +552,13 @@ module Hass {
           Utils.debugLog("BLE: subscription refused, waiting for encryption", null, null);
           return;
         }
-        _fail(_securityStatus(status) ? BleError.BLE_NOT_PAIRED : BleError.BLE_CONNECT_FAILED);
+        if (_securityStatus(status)) {
+          if (!_repair()) {
+            _fail(BleError.BLE_NOT_PAIRED);
+          }
+          return;
+        }
+        _fail(BleError.BLE_CONNECT_FAILED);
         return;
       }
       Utils.debugLog("BLE: subscribed, HELLO key=", _key != null, null);
@@ -597,6 +613,9 @@ module Hass {
         // NOT_PAIRED: HA does not know this watch (bond missing on HA's
         // side, or the watch was forgotten there); anything else: protocol
         forgetKey();
+        if (msg[2] == ST_NOT_PAIRED && _repair()) {
+          return;
+        }
         _fail(msg[2] == ST_NOT_PAIRED ? BleError.BLE_NOT_PAIRED : BleError.BLE_PROTOCOL);
         return;
       }
@@ -630,7 +649,6 @@ module Hass {
         _nonce = msg.slice(1, 9);
         _ctr = 0;
         _setState(LINK_READY);
-        _pairing = false;
         Utils.debugLog("BLE: session ready, entities=", msg[10], null);
         _listener.onLinkReady(msg[10]);
         return;
