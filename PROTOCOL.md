@@ -19,10 +19,11 @@ the comparison is a card in Settings > Devices & services.
    HA's integrations page and starts pairing.
 2. The watch shows the 6-digit code; at the same moment HA opens a card
    "Allow Garmin watch XX:XX:XX:XX:XX:XX? Code NNNNNN". HA's pairing agent
-   answers BlueZ only when the card is submitted (accept) or after 25 s or
-   Ignore (refuse), inside the 30 s pairing timeout. The user confirms on
-   the watch too. A refused or timed-out attempt closes the card; pairing
-   again from the watch opens a new one.
+   answers BlueZ when the card is submitted (accept) or Ignored (refuse).
+   The user confirms on the watch too. If the attempt ends otherwise (the
+   watch disconnects because the user declined or its pairing timed out,
+   or BlueZ cancels the request) the card closes; pairing again from the
+   watch opens a new one.
 3. A completed pairing is the approval: HA stores the watch with a random
    16-byte command key. The first HELLO without the key flag gets MSG_KEY
    over the encrypted link, then CHALLENGE; every command is signed with it.

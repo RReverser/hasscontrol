@@ -226,18 +226,26 @@ async def test_pairing_waits_for_card(hass_env, monkeypatch):
     flows = []
     monkeypatch.setattr(srv.discovery_flow, "async_create_flow",
                         lambda hass, domain, context, data: flows.append(data))
-    monkeypatch.setattr(srv, "APPROVAL_WAIT", 0.3)
     monkeypatch.setattr(srv, "POST_PAIR_CHECK", 0.05)
     pairing = server.periph.pairing
     dev = "/org/bluez/hci0/dev_90_F1_57_AB_AA_08"
     addr = "90:F1:57:AB:AA:08"
     # Just Works has no code to compare: refused
     assert await pairing.confirm(dev, None, "just_works") is False
-    # card opens with the code; not submitted in time: refused, card closed
-    assert await _pair(server, dev, 111111) is False
+    # card opens with the code; the watch disconnects (declined or timed out
+    # there): refused, card closed
+    task = asyncio.ensure_future(pairing.confirm(dev, 111111, "numeric_comparison"))
+    await asyncio.sleep(0.05)
+    server._on_device(dev, False)
+    assert await task is False
     assert flows[-1] == {"entry_id": "e1", "address": addr, "code": "111111"}
     assert addr not in server.pending and not server.is_approved(dev)
     assert server.approve(addr) is False  # late submit does nothing
+    # BlueZ cancels (Agent1.Cancel): refused
+    task = asyncio.ensure_future(pairing.confirm(dev, 333333, "numeric_comparison"))
+    await asyncio.sleep(0.05)
+    pairing.cancel()
+    assert await task is False
     # Ignore / refuse: False
     assert await _pair(server, dev, 222222, approve_after=0.01, approve=False) is False
     # submitted: pairing accepted, watch stored with a key

@@ -12,7 +12,7 @@
       },
       "approve": {
         "title": "Allow Garmin watch {address}?",
-        "description": "Code: **{code}**\n\nSubmit only if your watch shows the same code, then confirm on the watch too. The watch can then control the entities you exposed.\n\nThis request closes after 25 seconds; pairing again from the watch opens a new one."
+        "description": "Code: **{code}**\n\nSubmit only if your watch shows the same code, then confirm on the watch too. The watch can then control the entities you exposed.\n\nThis request closes if pairing is cancelled or times out on the watch; pairing again opens a new one."
       }
     },
     "abort": {

@@ -29,8 +29,6 @@ from .peripheral import BlePeripheral, PairingHandler
 
 _LOGGER = logging.getLogger(__name__)
 
-# Seconds HA waits for the card to be submitted (pairing times out at 30 s).
-APPROVAL_WAIT = 25
 # Seconds after pairing before a watch that never said HELLO is reconnected.
 POST_PAIR_CHECK = 5
 
@@ -117,9 +115,10 @@ class GarminBleServer:
     # sides show the same 6 digits and both must confirm. HA's side of the
     # confirmation is a discovery card ("Allow Garmin watch X? Code NNNNNN")
     # that opens the moment the watch asks to pair; HA's agent answers BlueZ
-    # only when the card is submitted (yes) or after APPROVAL_WAIT seconds /
-    # Ignore (no), well inside the 30 s pairing timeout. The watch opens HA on
-    # the phone before it starts pairing, so the card is already on screen.
+    # when the card is submitted (yes) or Ignored (no). The card closes when
+    # the attempt ends any other way: the watch disconnects (the user
+    # declined there, or its pairing timed out) or BlueZ cancels. The watch
+    # sends the phone a link to the page when it starts pairing.
     # A completed pairing is the approval: the watch is stored with its own
     # command key, which it fetches over the encrypted link (MSG_KEY).
     # CMD/EVT need an LE Secure Connections encrypted link (secure-write /
@@ -152,10 +151,11 @@ class GarminBleServer:
             data={"entry_id": self._entry_id, "address": addr, "code": code},
         )
         try:
-            ok = await asyncio.wait_for(asyncio.shield(fut), APPROVAL_WAIT)
-        except asyncio.TimeoutError:
-            ok = False
-            _LOGGER.info("pairing with %s not confirmed in HA within %ds", addr, APPROVAL_WAIT)
+            # no timer of our own: the attempt ends when the card is submitted
+            # or ignored, when the watch disconnects (cancelled or timed out on
+            # its side), or when BlueZ cancels the request (Agent1.Cancel;
+            # BlueZ also gives up on an agent after 60 s)
+            ok = await fut
         finally:
             if self._pending.get(addr, {}).get("future") is fut:
                 self._pending.pop(addr, None)
@@ -256,6 +256,7 @@ class GarminBleServer:
             _LOGGER.debug("central connected: %s", device)
         else:
             self._conns.pop(device, None)
+            self.reject(_address(device))  # a pairing on that link is over
             _LOGGER.debug("central disconnected: %s", device)
 
     @callback
