@@ -17,7 +17,9 @@ class ViewController {
   hidden var _loginView;
   hidden var _loginDelegate;
   hidden var _loaderActive;
-  hidden var _loaderTimer;
+  hidden var _loaderTimer;       // animates the loader; also ends it after LOADER_MIN_MS
+  hidden var _loaderTicking = false;
+  hidden var _loaderRemoveAt = null;
   hidden var _sceneController;
 
   function initialize() {
@@ -70,7 +72,8 @@ class ViewController {
   // Since the progress bar is not a normal view,
   // We need to work around that it doesnt have onHide and onShow
   function isShowingLoader() {
-    return _loaderActive != null && !isErrorActive() && !isLoginActive();
+    return _loaderActive != null && _loaderView != null && _loaderView.isActive()
+      && !isErrorActive() && !isLoginActive();
   }
 
   // Returns true when the "useListView" setting is enabled, selecting the
@@ -251,7 +254,11 @@ class ViewController {
 
   function showLoader(text) {
     if (isShowingLoader()) {
-      Ui.popView(Ui.SLIDE_IMMEDIATE);
+      // same screen, new step: just change the text
+      _loaderView.setDisplayString(text);
+      _loaderActive = System.getTimer();
+      _loaderRemoveAt = null;
+      return;
     }
 
     loaderView().setDisplayString(text);
@@ -259,6 +266,11 @@ class ViewController {
     Ui.pushView(_loaderView, new ProgressDelegate(), Ui.SLIDE_BLINK);
 
     _loaderActive = System.getTimer();
+    _loaderRemoveAt = null;
+    if (!_loaderTicking) {
+      _loaderTicking = true;
+      _loaderTimer.start(method(:_loaderTick), 100, true);
+    }
 
     Ui.requestUpdate();
   }
@@ -272,14 +284,35 @@ class ViewController {
       // the action had already finished.)
       var left = LOADER_MIN_MS - (System.getTimer() - _loaderActive);
       if (left > 0) {
-        _loaderTimer.start(method(:removeLoader), left, false);
+        _loaderRemoveAt = _loaderActive + LOADER_MIN_MS;  // _loaderTick ends it
         return;
       }
 
       Ui.popView(Ui.SLIDE_BLINK);
     }
 
+    _stopLoader();
+  }
+
+  function _loaderTick() {
+    if (!isShowingLoader()) {
+      _stopLoader();
+      return;
+    }
+    if (_loaderRemoveAt != null && System.getTimer() >= _loaderRemoveAt) {
+      removeLoader();
+      return;
+    }
+    _loaderView.step();
+  }
+
+  hidden function _stopLoader() {
     _loaderActive = null;
+    _loaderRemoveAt = null;
+    if (_loaderTicking) {
+      _loaderTicking = false;
+      _loaderTimer.stop();
+    }
   }
 
   function removeLoaderImmediate() {
@@ -287,7 +320,7 @@ class ViewController {
       Ui.popView(Ui.SLIDE_BLINK);
     }
 
-    _loaderActive = null;
+    _stopLoader();
   }
 
   function showError(error) {

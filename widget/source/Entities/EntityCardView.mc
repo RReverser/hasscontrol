@@ -71,6 +71,8 @@ class EntityCardView extends Ui.View {
       dc.setColor(Graphics.COLOR_WHITE, Graphics.COLOR_BLACK);
       dc.drawText(cvw, cvh, font, text, Graphics.TEXT_JUSTIFY_CENTER);
     }
+    // Select: pair (unpaired) or fetch the list again; menu
+    Hints.draw(dc, App.getApp().isLoggedIn() ? Hints.RETRY : Hints.OK, Hints.NONE, true);
   }
 
   function drawEntityText(dc, entity) {

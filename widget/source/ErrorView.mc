@@ -70,5 +70,6 @@ class ErrorView extends Ui.View {
         messageEl.setText(_message.toString());
 
         View.onUpdate(dc);
+        Hints.draw(dc, Hints.RETRY, Hints.CLOSE, true);
     }
 }
