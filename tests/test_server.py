@@ -226,7 +226,6 @@ async def test_pairing_waits_for_card(hass_env, monkeypatch):
     flows = []
     monkeypatch.setattr(srv.discovery_flow, "async_create_flow",
                         lambda hass, domain, context, data: flows.append(data))
-    monkeypatch.setattr(srv, "POST_PAIR_CHECK", 0.05)
     pairing = server.periph.pairing
     dev = "/org/bluez/hci0/dev_90_F1_57_AB_AA_08"
     addr = "90:F1:57:AB:AA:08"
@@ -256,15 +255,12 @@ async def test_pairing_waits_for_card(hass_env, monkeypatch):
     await server._on_write(dev, p.build_hello(has_key=False))
     msgs = server.periph.messages()
     assert msgs[0] == p.encode_key(key) and msgs[1][0] == p.MSG_CHALLENGE
-    await asyncio.sleep(0.1)
-    assert server.periph.disconnected == []  # said HELLO: link kept
-    # a watch that paired but never said HELLO is reconnected
-    dev2 = "/org/bluez/hci0/dev_11_22"
-    server._on_device(dev2, True)
-    assert await _pair(server, dev2, 42, approve_after=0.01) is True
-    await asyncio.sleep(0.1)
+    # BlueZ reports the pairing complete: the link is dropped so the watch
+    # reconnects as a bonded device; not for devices HA did not approve
+    pairing.paired("/org/bluez/hci0/dev_11_22")
+    pairing.paired(dev)
     await hass.async_block_till_done()
-    assert server.periph.disconnected == [dev2]
+    assert server.periph.disconnected == [dev]
     # forget: bond removed, HELLO refused
     await server.forget([addr])
     assert server.periph.removed[-1] == dev

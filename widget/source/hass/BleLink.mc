@@ -28,7 +28,6 @@ module Hass {
   const CONNECT_ATTEMPT_MS = 15000;
   const DISCOVERY_WAIT_MS = 8000;
   const STORAGE_BOND_TRY = "ble/bondTry";
-  const BOND_WAIT_MS = 40000;  // user confirms the code on the watch and in HA
   const ENCRYPTION_WAIT_MS = 5000;  // bonded link: LTK encryption after connect
   const APPROVAL_WAIT_MS = 600000;  // how long the app waits for approval in HA
   const APPROVAL_POLL_MS = 3000;    // HELLO retry while waiting for approval
@@ -311,11 +310,6 @@ module Hass {
         }
         return;
       }
-      if (_state == LINK_BONDING && now - _connectStarted > BOND_WAIT_MS) {
-        Utils.debugLog("BLE: pairing timed out", null, null);
-        _fail(BleError.BLE_PAIR_FAILED);
-        return;
-      }
       if (_state == LINK_APPROVAL) {
         if (now - _approvalStarted > APPROVAL_WAIT_MS) {
           _fail(BleError.BLE_NOT_APPROVED);
@@ -392,6 +386,11 @@ module Hass {
         _secure(device);
       } else if (_state == LINK_IDLE || _state == LINK_FAILED) {
         _parked = null;
+      } else if (_state == LINK_BONDING && _device != null
+                 && !((_device has :isBonded) && _device.isBonded())) {
+        // pairing ended without a bond (declined on the watch or in HA, or
+        // timed out): no timer of our own, the link going down ends it
+        _fail(BleError.BLE_PAIR_FAILED);
       } else if (_state == LINK_SCANNING || _state == LINK_REGISTERING) {
         // late disconnect of a device already let go (e.g. after _repair())
         return;
@@ -493,7 +492,6 @@ module Hass {
           _systemPairs = false;
           Ble.setConnectionStrategy(Ble.CONNECTION_STRATEGY_DEFAULT);
           Utils.debugLog("BLE: paired, waiting for reconnect", null, null);
-          _connectStarted = System.getTimer();
         } else if (status == Ble.STATUS_SUCCESS) {
           _enableNotify();
         } else {

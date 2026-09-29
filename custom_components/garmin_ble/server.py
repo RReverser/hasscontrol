@@ -17,11 +17,7 @@ from homeassistant import config_entries
 from homeassistant.helpers import discovery_flow
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.storage import Store
-from homeassistant.helpers.event import (
-    async_call_later,
-    async_track_state_change_event,
-    async_track_time_interval,
-)
+from homeassistant.helpers.event import async_track_state_change_event, async_track_time_interval
 
 from . import protocol as p
 from .const import DOMAIN, SIGNAL_BATTERY
@@ -29,8 +25,6 @@ from .peripheral import BlePeripheral, PairingHandler
 
 _LOGGER = logging.getLogger(__name__)
 
-# Seconds after pairing before a watch that never said HELLO is reconnected.
-POST_PAIR_CHECK = 5
 
 _ON_OFF = {"light", "switch", "fan", "input_boolean", "automation", "siren", "humidifier"}
 
@@ -165,20 +159,20 @@ class GarminBleServer:
         self._watches[addr] = {"code": code, "at": int(time.time()), "key": os.urandom(16).hex()}
         await self._save()
         _LOGGER.info("watch %s paired and approved", addr)
-        async_call_later(self.hass, POST_PAIR_CHECK, callback(lambda _now: self._after_pairing(device)))
         return True
 
     @callback
-    def _after_pairing(self, device: str) -> None:
-        # A watch that paired through its system dialog cannot see the service
-        # on that connection (Fenix 7, Connect IQ secure strategy); dropping
-        # it makes the watch reconnect normally. A watch that already said
-        # HELLO keeps its link.
-        conn = self._conns.get(device)
-        if conn is not None and conn.session is None and not conn.hello:
-            _LOGGER.debug("no HELLO after pairing from %s: reconnecting it", device)
-            self._conns.pop(device, None)
-            self.hass.async_create_task(self.periph.disconnect(device))
+    def paired(self, device: str) -> None:
+        """BlueZ finished pairing a watch approved on its card: drop that
+        link so the watch reconnects as a bonded device. A watch that paired
+        through its system dialog (Connect IQ secure strategy) cannot see the
+        service on that connection (Fenix 7), and a reconnect costs the other
+        path only a few seconds."""
+        if not self.is_approved(device):
+            return
+        _LOGGER.debug("paired %s: reconnecting it", device)
+        self._conns.pop(device, None)
+        self.hass.async_create_task(self.periph.disconnect(device))
 
     def approve(self, addr: str) -> bool:
         """The card was submitted: confirm the pairing waiting for it."""
@@ -400,3 +394,6 @@ class _Pairing(PairingHandler):
     def cancel(self) -> None:
         _LOGGER.info("pairing cancelled by BlueZ")
         self._s.reject()
+
+    def paired(self, device: str) -> None:
+        self._s.paired(device)

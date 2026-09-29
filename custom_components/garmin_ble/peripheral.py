@@ -149,6 +149,9 @@ class PairingHandler:
     def cancel(self) -> None:  # pragma: no cover
         pass
 
+    def paired(self, device: str) -> None:  # pragma: no cover
+        """BlueZ reports the device as paired (pairing completed)."""
+
 
 class _Agent(ServiceInterface):
     """org.bluez.Agent1: answers pairing requests from the watch.
@@ -217,6 +220,7 @@ class BlePeripheral:
         self._on_write = on_write
         self._on_device = on_device
         self._agent = _Agent(pairing) if pairing is not None else None
+        self._pairing = pairing
         self._agent_registered = False
         self._bus: MessageBus | None = None
         self._registered = False
@@ -332,6 +336,8 @@ class BlePeripheral:
                 for prop in ("Paired", "Bonded", "Trusted"):
                     if prop in changed:
                         _LOGGER.info("%s %s=%s", msg.path, prop, changed[prop].value)
+                if "Paired" in changed and changed["Paired"].value and self._pairing is not None:
+                    self._pairing.paired(msg.path)
                 if "Connected" in changed:
                     self._on_device(msg.path, bool(changed["Connected"].value))
         elif msg.member == "InterfacesAdded" and msg.body and msg.body[0] == self._adapter_path:

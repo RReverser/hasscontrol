@@ -37,8 +37,10 @@ removed).
 
 Watch side: with no bond, the app connects with Connect IQ's secure pairing
 strategy (the system pairs while connecting). That connection lists no
-services on a Fenix 7, so HA drops a freshly paired link that sends no HELLO
-within 5 s and the watch reconnects normally (default strategy, bonded).
+services on a Fenix 7, so when BlueZ reports the pairing complete HA drops
+the link and the watch reconnects normally (default strategy, bonded).
+Neither side runs a pairing timer: the attempt ends on a confirmation, a
+refusal, a disconnect or a BlueZ cancel.
 
 HA cannot start pairing itself: Connect IQ apps can only act as a BLE
 central, so the watch never advertises anything HA could connect to.
