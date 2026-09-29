@@ -18,6 +18,7 @@ module Hass {
   const REQUEST_TIMEOUT_MS = 10000;
   const CONNECT_TIMEOUT_MS = 40000;
   const TICK_MS = 50;
+  const RETRY_DELAY_MS = 2000;
   // Set once a session completed a LIST with HA; cleared by logout.
   const STORAGE_PAIRED = "ble/paired";
 
@@ -49,6 +50,7 @@ module Hass {
     hidden var _connectDeadline = null;
     hidden var _statusText = null;
     hidden var _approvalLinkSent = false;
+    hidden var _retryAt = null;    // connection retry scheduled (reconnect loop)
 
     function initialize() {
       _link = new BleLink(self);
@@ -106,6 +108,8 @@ module Hass {
         } else if (state == LINK_BONDING || state == LINK_DISCOVERING || state == LINK_ENCRYPTING
                    || state == LINK_SUBSCRIBING || state == LINK_HELLO) {
           text = _link.isPairing() ? "Pairing" : "Connecting";
+        } else if (_retryAt != null || _connectDeadline != null) {
+          text = "Searching";  // between attempts of the reconnect loop
         }
       }
       if (text == null ? _statusText == null : text.equals(_statusText)) {
@@ -341,8 +345,24 @@ module Hass {
       _startList();
     }
 
+    // Radio-level failures (HA out of range, connection dropped) never end
+    // on an error screen: the link retries while requests wait, showing
+    // "Searching". Only failures the user must act on (pairing refused, not
+    // approved, ...) fail the waiting requests.
     function onLinkError(code) {
+      if (_ops.size() > 0 && _isRadioError(code)) {
+        _failPending(new BleError(code));
+        _retryAt = System.getTimer() + RETRY_DELAY_MS;
+        _connectDeadline = null;
+        _ensureTick();
+        return;
+      }
       _onDown(new BleError(code));
+    }
+
+    hidden function _isRadioError(code) {
+      return code == BleError.BLE_NOT_FOUND || code == BleError.BLE_CONNECT_FAILED
+        || code == BleError.BLE_TIMEOUT || code == BleError.BLE_WRITE_FAILED;
     }
 
     function onLinkDown() {
@@ -410,7 +430,33 @@ module Hass {
 
     // ---- failure handling, deferral and timeouts ----------------------------------
 
+    // Actions (and battery reports) must not fire long after the user asked
+    // for them: they fail once their deadline passes without a connection.
+    // Reads (the entity list, states) keep waiting for the link.
+    hidden function _expireActions(now) {
+      if (_ready) {
+        return;
+      }
+      var keep = [];
+      for (var i = 0; i < _ops.size(); i++) {
+        var op = _ops[i];
+        if ((op[:k] == :action || op[:k] == :battery) && now > op[:deadline]) {
+          _defer(op[:cb], new BleError(BleError.BLE_NOT_FOUND), null);
+        } else {
+          keep.add(op);
+        }
+      }
+      var expired = keep.size() < _ops.size();
+      _ops = keep;
+      if (expired && _ops.size() == 0) {
+        _retryAt = null;
+        _connectDeadline = null;
+        _link.stop();
+      }
+    }
+
     hidden function _onDown(err) {
+      _retryAt = null;
       _ready = false;
       _listing = false;
       _connectDeadline = null;
@@ -467,9 +513,20 @@ module Hass {
       }
 
       if (_connectDeadline != null && !_ready && now > _connectDeadline) {
+        // no connection yet: start over (keeps "Searching" on screen)
+        Utils.debugLog("BLE: still no connection, retrying", null, null);
         _link.stop();
-        _onDown(new BleError(BleError.BLE_NOT_FOUND));
+        _retryAt = now;
+        _connectDeadline = null;
       }
+      if (_retryAt != null && now >= _retryAt) {
+        _retryAt = null;
+        if (!_ready && _ops.size() > 0) {
+          _connectDeadline = now + CONNECT_TIMEOUT_MS;
+          _link.start();
+        }
+      }
+      _expireActions(now);
 
       var ks = _pendingCtr.keys();
       for (var i = 0; i < ks.size(); i++) {

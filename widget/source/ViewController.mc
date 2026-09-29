@@ -253,7 +253,7 @@ class ViewController {
 
     loaderView().setDisplayString(text);
 
-    Ui.pushView(_loaderView, null, Ui.SLIDE_BLINK);
+    Ui.pushView(_loaderView, new ProgressDelegate(), Ui.SLIDE_BLINK);
 
     _loaderActive = Time.now();
 

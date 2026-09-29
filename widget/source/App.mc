@@ -69,6 +69,16 @@ class HassControlApp extends App.AppBase {
     Hass.importEntities(true);
   }
 
+  // "Try again" from an error screen: pair if unpaired, otherwise fetch the
+  // entity list again (reconnecting as needed).
+  function retry() {
+    if (!isLoggedIn()) {
+      login();
+    } else {
+      Hass.importEntities(true);
+    }
+  }
+
   function login() {
     var callback = method(:onLoggedIn);
 

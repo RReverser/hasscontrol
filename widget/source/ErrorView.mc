@@ -6,10 +6,23 @@ class ErrorDelegate extends Ui.BehaviorDelegate {
         BehaviorDelegate.initialize();
     }
 
+    // Select: dismiss and try again (pair / reconnect / refresh).
     function onSelect() {
         App.getApp().resetInactivityTimer();
         App.getApp().viewController.removeError();
+        App.getApp().retry();
         return true;
+    }
+
+    function onMenu() {
+        App.getApp().resetInactivityTimer();
+        App.getApp().viewController.removeError();
+        App.getApp().menu.showRootMenu();
+        return true;
+    }
+
+    function onHold(clickEvent) {
+        return onMenu();
     }
 
     function onBack() {
