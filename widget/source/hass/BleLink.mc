@@ -82,7 +82,8 @@ module Hass {
     hidden var _cccd = null;
     hidden var _discoveryStarted = 0;
     hidden var _rebonded = false;
-    hidden var _unbonded = false;    // the connected HA had no bond: this link pairs    // stale bond already dropped once this attempt
+    hidden var _unbonded = false;
+    hidden var _parked = null;       // system-made connection kept unused until needed    // the connected HA had no bond: this link pairs    // stale bond already dropped once this attempt
     hidden var _encWaitStarted = 0;
     hidden var _cccdRetried = false;
     hidden var _approvalStarted = 0;
@@ -161,6 +162,15 @@ module Hass {
       _setSecureStrategy();
       _logSystemDevices();
       if (_profileRegistered) {
+        var p = _parked;
+        _parked = null;
+        if (p != null && p.isConnected()) {
+          Utils.debugLog("BLE: using parked connection", null, null);
+          _device = p;
+          _unbonded = !((p has :isBonded) && p.isBonded());
+          _secure(p);
+          return;
+        }
         _connect();
         return;
       }
@@ -360,10 +370,16 @@ module Hass {
       if (state == Ble.CONNECTION_STATE_CONNECTED) {
         // Besides the connection we asked for, the system reconnects on its
         // own to a device this app instance has paired (e.g. after HA drops
-        // an idle link). Adopt those too: HA stops advertising while a
-        // central is connected, so scanning for it again would never succeed.
-        if (_state != LINK_CONNECTING && _state != LINK_SCANNING
-            && _state != LINK_IDLE && _state != LINK_FAILED) {
+        // an idle link). With nothing to do it is only remembered (no
+        // session, no traffic); the next request uses it, since HA stops
+        // advertising while a central is connected and a scan would not find
+        // it.
+        if (_state == LINK_IDLE || _state == LINK_FAILED) {
+          Utils.debugLog("BLE: system reconnect, parked", null, null);
+          _parked = device;
+          return;
+        }
+        if (_state != LINK_CONNECTING && _state != LINK_SCANNING) {
           return;
         }
         Ble.setScanState(Ble.SCAN_STATE_OFF);
@@ -372,6 +388,8 @@ module Hass {
         Utils.debugLog("BLE: connected after tries=", _connectTries, null);
         _connectTries = 0;
         _secure(device);
+      } else if (_state == LINK_IDLE || _state == LINK_FAILED) {
+        _parked = null;
       } else if (_state == LINK_SCANNING || _state == LINK_REGISTERING) {
         // late disconnect of a device already let go (e.g. after _repair())
         return;
