@@ -308,3 +308,14 @@ async def test_ignore_and_expiry(hass_env, monkeypatch):
     await server._expire_pending()
     assert "33:44" not in server.pending and server.periph.removed[-1] == d1
     await hass.async_stop(force=True)
+
+
+@pytest.mark.asyncio
+async def test_ping_keeps_session(hass_env):
+    hass, server, _ = await hass_env()
+    dev, nonce, _ = await _hello(server)
+    server._conns[dev].last_seen -= 25
+    await server._on_write(dev, p.build_command(KEY, nonce, 1, p.OP_PING))
+    assert server.periph.messages() == []
+    assert srv.time.monotonic() - server._conns[dev].last_seen < 1
+    await hass.async_stop(force=True)

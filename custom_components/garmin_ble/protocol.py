@@ -21,6 +21,7 @@ OP_LIST = 0x02
 OP_GET = 0x03
 OP_ACTION = 0x04
 OP_BATTERY = 0x05
+OP_PING = 0x06  # keep-alive: authenticated, no reply
 OP_BYE = 0x07
 
 # HA -> watch message types

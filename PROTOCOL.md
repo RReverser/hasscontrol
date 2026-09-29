@@ -74,6 +74,7 @@ last 4 bytes  tag = HMAC-SHA256(key, nonce || ctr_be32 || op || payload)[0:4]
 | 0x03 | GET | `idx u8` | ENTITY |
 | 0x04 | ACTION | `idx u8, action u8, arg...` | RESULT, then ENTITY with the new state when it changes |
 | 0x05 | BATTERY | `percent u8, charging u8` | RESULT |
+| 0x06 | PING | (none) | nothing (keeps the session from the idle timeout; the app sends it every 20 s while open) |
 | 0x07 | BYE | (none) | HA disconnects |
 
 ACTION codes (the first eight equal hasscontrol's `Client.ENTITY_ACTION_*`):

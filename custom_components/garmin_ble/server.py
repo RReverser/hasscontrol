@@ -326,6 +326,8 @@ class GarminBleServer:
             async_dispatcher_send(self.hass, SIGNAL_BATTERY.format(self._entry_id),
                                   payload[0], bool(payload[1]) if len(payload) > 1 else None)
             self._send(p.encode_result(ctr, p.ST_OK))
+        elif op == p.OP_PING:
+            pass  # keep-alive: verifying it already refreshed last_seen
         elif op == p.OP_BYE:
             self._conns.pop(device, None)
             await self.periph.disconnect(device)

@@ -288,9 +288,6 @@ class EntityListView extends Ui.View {
 
   function onShow() {
     Hass.onViewShown();
-    if (App.Properties.getValue("refresh") && App.getApp().isLoggedIn()) {
-      Hass.refreshAllEntities(true);
-    }
   }
 
   function onHide() {

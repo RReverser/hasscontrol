@@ -22,6 +22,7 @@ module Hass {
   const OP_GET = 0x03;
   const OP_ACTION = 0x04;
   const OP_BATTERY = 0x05;
+  const OP_PING = 0x06;
   const OP_BYE = 0x07;
 
   const CONNECT_ATTEMPT_MS = 15000;

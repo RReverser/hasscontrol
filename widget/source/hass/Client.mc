@@ -19,6 +19,7 @@ module Hass {
   const CONNECT_TIMEOUT_MS = 40000;
   const TICK_MS = 50;
   const RETRY_DELAY_MS = 2000;
+  const KEEPALIVE_MS = 20000;  // under HA's 30 s idle timeout
   // Set once a session completed a LIST with HA; cleared by logout.
   const STORAGE_PAIRED = "ble/paired";
 
@@ -50,7 +51,10 @@ module Hass {
     hidden var _connectDeadline = null;
     hidden var _statusText = null;
     hidden var _approvalLinkSent = false;
-    hidden var _retryAt = null;    // connection retry scheduled (reconnect loop)
+    hidden var _retryAt = null;
+    hidden var _live = false;      // app in use: keep a session for live states
+    hidden var _keepArmed = false; // _timer currently runs the keep-alive
+    hidden var _bgList = false;    // the running LIST was not asked for by a request    // connection retry scheduled (reconnect loop)
 
     function initialize() {
       _link = new BleLink(self);
@@ -139,6 +143,7 @@ module Hass {
     }
 
     function shutdown() {
+      _live = false;
       _link.stop();
       _onDown(new BleError(BleError.BLE_CONNECT_FAILED));
     }
@@ -215,6 +220,7 @@ module Hass {
     // ---- queueing ------------------------------------------------------------
 
     hidden function _enqueue(op) {
+      _live = true;
       op[:deadline] = System.getTimer() + CONNECT_TIMEOUT_MS + REQUEST_TIMEOUT_MS;
       _ops.add(op);
       if (_ready) {
@@ -341,7 +347,9 @@ module Hass {
       _connectDeadline = null;
       _cache = {};
       _index = {};
-      // the index map is per connection: always list first
+      // the index map is per connection: always list first; a reconnect
+      // made only to stay live pushes what it lists to the views
+      _bgList = _ops.size() == 0;
       _startList();
     }
 
@@ -384,7 +392,8 @@ module Hass {
       } else if (t == MSG_LIST_END) {
         App.Storage.setValue(STORAGE_PAIRED, true);
         _listing = false;
-        _listFresh = true;
+        _listFresh = !_bgList;
+        _bgList = false;
         _drain();
       } else if (t == MSG_RESULT && msg.size() >= 3) {
         var p = _pendingCtr[msg[1]];
@@ -414,6 +423,9 @@ module Hass {
       _index[id] = idx;
       if (_listing) {
         _ids.add(id);
+        if (_bgList) {
+          _defer(Utils.method(Hass, :onEntityPushed), null, { :body => body, :context => null });
+        }
         return;
       }
       var waiters = _pendingGet[idx];
@@ -497,6 +509,10 @@ module Hass {
 
     hidden function _ensureTick() {
       if (!_timerRunning) {
+        if (_keepArmed) {
+          _timer.stop();
+          _keepArmed = false;
+        }
         _timerRunning = true;
         _timer.start(method(:_tick), TICK_MS, true);
       }
@@ -554,11 +570,38 @@ module Hass {
         batch[i][0].invoke(batch[i][1], batch[i][2]);
       }
 
+      var ls2 = _link.getState();
+      var linkBusy = !_ready && ls2 != LINK_IDLE && ls2 != LINK_FAILED;
       if (_deferred.size() == 0 && _pendingCtr.size() == 0 && _pendingGet.size() == 0
-          && (_ops.size() == 0 || _ready)) {
+          && (_ops.size() == 0 || _ready) && !linkBusy && !_listing) {
         _timer.stop();
         _timerRunning = false;
+        if (_live) {
+          // one timer only (Connect IQ limits them): it doubles as the
+          // keep-alive clock while nothing else is pending
+          _keepArmed = true;
+          _timer.start(method(:_keepAlive), KEEPALIVE_MS, false);
+        }
       }
+    }
+
+    // While the app is open: keep the session (HA pushes every state change
+    // over it), or quietly re-open it after HA or the radio dropped it.
+    function _keepAlive() {
+      _keepArmed = false;
+      if (!_live) {
+        return;
+      }
+      if (_ready) {
+        _link.send(OP_PING, []b);
+      } else if (isLoggedIn()) {
+        // never pairs in the background: only a paired watch reconnects
+        var st = _link.getState();
+        if (st == LINK_IDLE || st == LINK_FAILED) {
+          _link.start();
+        }
+      }
+      _ensureTick();
     }
   }
 
