@@ -393,10 +393,10 @@ module Hass {
 
     function onMessage(msg) {
       var t = msg[0];
-      Utils.debugLog("BLE: msg type=", t, " len=" + msg.size());
       if (t == MSG_ENTITY) {
         _onEntity(msg);
       } else if (t == MSG_LIST_END) {
+        Utils.debugLog("BLE: list done, n=", _ids.size(), _bgList ? " (background)" : "");
         App.Storage.setValue(STORAGE_PAIRED, true);
         _listing = false;
         _listFresh = !_bgList;
@@ -416,7 +416,6 @@ module Hass {
     }
 
     hidden function _onEntity(msg) {
-      Utils.debugLog("BLE: entity ", msg.size() > 1 ? msg[1] : -1, null);
       if (msg.size() < 2) {
         return;
       }

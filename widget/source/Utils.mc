@@ -488,7 +488,7 @@ module Utils {
   // Last LOG_RING_MAX debug lines, shown by the "BLE log" menu entry so a
   // failure can be read (or photographed) on the watch without USB. The
   // ring is saved on app stop and restored on the next start.
-  const LOG_RING_MAX = 60;
+  const LOG_RING_MAX = 150;
   const STORAGE_LOG = "debug/log";
   var _logRing = [];
 
