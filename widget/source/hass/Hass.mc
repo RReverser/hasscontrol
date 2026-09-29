@@ -764,6 +764,9 @@ module Hass {
     }
 
     if (showLoaderUi) {
+      // asked for explicitly: if the link is still connecting in the
+      // background, show those steps from here on
+      client.setQuiet(false);
       App.getApp().viewController.showLoader("Refreshing");
     }
 
