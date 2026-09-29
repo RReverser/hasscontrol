@@ -84,7 +84,8 @@ module Hass {
     hidden var _discoveryStarted = 0;
     hidden var _rebonded = false;
     hidden var _unbonded = false;
-    hidden var _parked = null;       // system-made connection kept unused until needed    // the connected HA had no bond: this link pairs    // stale bond already dropped once this attempt
+    hidden var _parked = null;
+    hidden var _systemPairs = false; // no bond yet: the system pairs while connecting       // system-made connection kept unused until needed    // the connected HA had no bond: this link pairs    // stale bond already dropped once this attempt
     hidden var _encWaitStarted = 0;
     hidden var _cccdRetried = false;
     hidden var _approvalStarted = 0;
@@ -420,6 +421,15 @@ module Hass {
     }
 
     hidden function _subscribe(device) {
+      if (_systemPairs && !((device has :isBonded) && device.isBonded())) {
+        // the system is pairing this connection (code on screen): wait
+        if (_state != LINK_BONDING) {
+          Utils.debugLog("BLE: system pairing, waiting", null, null);
+          _setState(LINK_BONDING);
+          _connectStarted = System.getTimer();
+        }
+        return;
+      }
       var svc = device.getService(_svcUuid);
       if (svc == null) {
         // another Device object for the same peer may carry the services
@@ -477,7 +487,14 @@ module Hass {
       Utils.debugLog("BLE: encryption status=", status, " link=" + _state);
       App.Storage.deleteValue(STORAGE_BOND_TRY);
       if (_state == LINK_BONDING) {
-        if (status == Ble.STATUS_SUCCESS) {
+        if (status == Ble.STATUS_SUCCESS && _systemPairs) {
+          // paired; this connection shows no services: HA drops it and the
+          // next one (default strategy, bonded) goes on normally
+          _systemPairs = false;
+          Ble.setConnectionStrategy(Ble.CONNECTION_STRATEGY_DEFAULT);
+          Utils.debugLog("BLE: paired, waiting for reconnect", null, null);
+          _connectStarted = System.getTimer();
+        } else if (status == Ble.STATUS_SUCCESS) {
           _enableNotify();
         } else {
           _fail(BleError.BLE_PAIR_FAILED);
@@ -538,16 +555,25 @@ module Hass {
         + " name=" + d.getName(), " svcs=" + n, names);
     }
 
-    // Always the default strategy. Under CONNECTION_STRATEGY_SECURE_PAIR_BOND
-    // a Fenix 7 (fw 27.18, CIQ 6.0.2) pairs and encrypts, but every Device
-    // object then reports zero services (getServices() empty, getService()
-    // null) although the watch discovered HA's GATT database. Bonding is
-    // requested explicitly instead, after the service lookup (_subscribe).
+    // No bond yet: CONNECTION_STRATEGY_SECURE_PAIR_BOND, so the system pairs
+    // as part of connecting (no "open connection" warning for an unencrypted
+    // link, expected but not verified). On a Fenix 7 (fw 27.18, CIQ 6.0.2)
+    // that connection then lists no services, so the app only waits for the
+    // pairing to finish; HA drops a freshly paired link that says no HELLO,
+    // and the reconnect (default strategy, bonded) works normally.
+    // Bonded: the default strategy (the secure one breaks the service list).
     hidden function _setSecureStrategy() {
-      if ((Ble has :setConnectionStrategy) && (Ble has :CONNECTION_STRATEGY_DEFAULT)) {
-        Ble.setConnectionStrategy(Ble.CONNECTION_STRATEGY_DEFAULT);
-        Utils.debugLog("BLE: strategy=default", null, null);
+      if (!((Ble has :setConnectionStrategy) && (Ble has :CONNECTION_STRATEGY_DEFAULT))) {
+        return;
       }
+      var bonded = false;
+      if (Ble has :getBondedDevices) {
+        bonded = Ble.getBondedDevices().next() != null;
+      }
+      _systemPairs = !bonded && (Ble has :CONNECTION_STRATEGY_SECURE_PAIR_BOND);
+      Ble.setConnectionStrategy(_systemPairs ? Ble.CONNECTION_STRATEGY_SECURE_PAIR_BOND
+                                             : Ble.CONNECTION_STRATEGY_DEFAULT);
+      Utils.debugLog("BLE: strategy=", _systemPairs ? "secure" : "default", null);
     }
 
     hidden function _securityStatus(status) {

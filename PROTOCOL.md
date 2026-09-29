@@ -10,30 +10,34 @@ Every frame in both directions fits in **20 bytes**. Connect IQ throws
 does not implement long reads or long writes, and the ATT MTU on the watch is
 not negotiable from Connect IQ, so notifications are also kept to 20 bytes.
 
-## Pairing and approval (required)
+## Pairing (required)
 
-1. On the watch choose **Pair**. The watch bonds with HA using standard
-   LE Secure Connections pairing with Numeric Comparison; the user confirms
-   the 6-digit code on the watch. HA accepts the bond at once and records the
-   code. A bond alone grants nothing.
-2. HA opens a discovery flow under Settings > Devices & services:
-   "Allow Garmin watch XX:XX:XX:XX:XX:XX?" with the same code. It can be
-   approved at any time; until then HELLO gets RESULT NOT_APPROVED and the
-   watch keeps retrying.
-3. On approval HA generates a random 16-byte command key for that watch.
-   The next HELLO from the watch without a stored key gets MSG_KEY (over the
-   encrypted link) before the CHALLENGE. The watch stores it; every command
-   is signed with it. No secret is entered anywhere.
+Standard LE Secure Connections pairing with Numeric Comparison; HA's side of
+the comparison is a card in Settings > Devices & services.
+
+1. Unpaired, the watch app sends the phone (via Garmin Connect) a link to
+   HA's integrations page and asks "HA open on phone?". On Yes it pairs.
+2. The watch shows the 6-digit code; at the same moment HA opens a card
+   "Allow Garmin watch XX:XX:XX:XX:XX:XX? Code NNNNNN". HA's pairing agent
+   answers BlueZ only when the card is submitted (accept) or after 25 s or
+   Ignore (refuse), inside the 30 s pairing timeout. The user confirms on
+   the watch too. A refused or timed-out attempt closes the card; pairing
+   again from the watch opens a new one.
+3. A completed pairing is the approval: HA stores the watch with a random
+   16-byte command key. The first HELLO without the key flag gets MSG_KEY
+   over the encrypted link, then CHALLENGE; every command is signed with it.
 
 Enforcement on HA: CMD is `secure-write` and EVT's CCCD `secure-notify`
 (BlueZ rejects both on links without an LE Secure Connections key); Just
-Works pairing is refused; HELLO from an address that is not approved gets
-NOT_PAIRED or NOT_APPROVED; a new bond for an approved address drops the
-approval and asks again. A card left unanswered for 24 h is withdrawn and
-the watch's bond removed. **Ignore** on the card is HA's standard ignore: the
-bond is removed and pairing from that address is refused until it is
-un-ignored under Devices & services. The integration's options list approved and
-waiting watches and can forget them (approval, key and bond removed).
+Works pairing is refused; HELLO from an address that is not a paired watch
+gets NOT_PAIRED; pairing from an address ignored in HA is refused until it
+is un-ignored. The integration's options can forget watches (key and bond
+removed).
+
+Watch side: with no bond, the app connects with Connect IQ's secure pairing
+strategy (the system pairs while connecting). That connection lists no
+services on a Fenix 7, so HA drops a freshly paired link that sends no HELLO
+within 5 s and the watch reconnects normally (default strategy, bonded).
 
 HA cannot start pairing itself: Connect IQ apps can only act as a BLE
 central, so the watch never advertises anything HA could connect to.
@@ -153,8 +157,8 @@ connection (entities sorted by entity_id when the connection authenticates).
 
 RESULT status codes: 0 OK, 1 BAD_AUTH, 2 BAD_INDEX, 3 NOT_ALLOWED,
 4 SERVICE_ERROR, 5 BAD_FRAME (also HELLO with another protocol version),
-6 NO_SESSION, 7 NOT_PAIRED (HELLO from an unknown device), 8 NOT_APPROVED
-(HELLO from a bonded watch still waiting for approval in HA). HELLO answers
+6 NO_SESSION, 7 NOT_PAIRED (HELLO from a device that is not a paired
+watch), 8 NOT_APPROVED (unused since pairing itself is confirmed in HA). HELLO answers
 use ctr8 0.
 
 After authentication HA also pushes an ENTITY message whenever an exposed

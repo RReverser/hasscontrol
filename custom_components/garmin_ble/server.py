@@ -1,6 +1,7 @@
 """Protocol server: sessions, allowlist, dispatch to Home Assistant services."""
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import time
@@ -16,7 +17,11 @@ from homeassistant import config_entries
 from homeassistant.helpers import discovery_flow
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.storage import Store
-from homeassistant.helpers.event import async_track_state_change_event, async_track_time_interval
+from homeassistant.helpers.event import (
+    async_call_later,
+    async_track_state_change_event,
+    async_track_time_interval,
+)
 
 from . import protocol as p
 from .const import DOMAIN, SIGNAL_BATTERY
@@ -24,8 +29,10 @@ from .peripheral import BlePeripheral, PairingHandler
 
 _LOGGER = logging.getLogger(__name__)
 
-# A watch left waiting for approval is dropped with its bond after this long.
-PENDING_TTL = 24 * 3600
+# Seconds HA waits for the card to be submitted (pairing times out at 30 s).
+APPROVAL_WAIT = 25
+# Seconds after pairing before a watch that never said HELLO is reconnected.
+POST_PAIR_CHECK = 5
 
 _ON_OFF = {"light", "switch", "fan", "input_boolean", "automation", "siren", "humidifier"}
 
@@ -57,6 +64,7 @@ for _d in ("number", "input_number"):
 class _Conn:
     session: p.Session | None = None
     key: bytes | None = None
+    hello: bool = False
     last_seen: float = field(default_factory=time.monotonic)
 
 
@@ -74,9 +82,8 @@ class GarminBleServer:
         self._unsub_state = None
         # approved watches: BLE address -> {"key": hex, "code": pairing code, "at": epoch s}
         self._watches: dict[str, dict] = {}
-        # bonded but not approved yet: BLE address -> {"code", "at"}
+        # pairing waiting for the card: BLE address -> {"code", "future"}
         self._pending: dict[str, dict] = {}
-        self._flows_started: set[str] = set()
         self._store = Store(hass, 1, f"{DOMAIN}.{entry_id}.watches")
         self.periph = BlePeripheral(adapter, self._on_write, self._on_device, _Pairing(self))
 
@@ -84,7 +91,7 @@ class GarminBleServer:
     async def async_start(self) -> None:
         data = (await self._store.async_load()) or {}
         if "approved" in data:
-            self._watches, self._pending = data["approved"], data.get("pending", {})
+            self._watches = data["approved"]  # a stored "pending" (older format) is dropped
         else:  # first format: {address: {...}} of approved watches
             self._watches = data
         for info in self._watches.values():
@@ -92,15 +99,11 @@ class GarminBleServer:
         await self._save()
         self._refresh_entities()
         await self.periph.start()
-        await self._expire_pending()
-        for addr in self._pending:
-            self._ask_approval(addr)
         self._unsubs.append(async_track_time_interval(
             self.hass, self._check_idle, timedelta(seconds=5)))
-        self._unsubs.append(async_track_time_interval(
-            self.hass, self._expire_pending, timedelta(hours=1)))
 
     async def async_stop(self) -> None:
+        self.reject()
         for u in self._unsubs:
             u()
         if self._unsub_state:
@@ -109,68 +112,96 @@ class GarminBleServer:
             await self.periph.disconnect(dev)
         await self.periph.stop()
 
-    # ---- pairing and approval ----------------------------------------------
-    # 1. The watch pairs (LE Secure Connections, numeric comparison; the user
-    #    confirms the code on the watch). HA's agent accepts the bond at once
-    #    and records the code: a bond alone grants nothing.
-    # 2. HA opens a discovery flow ("Allow Garmin watch X? code NNNNNN") that
-    #    the user can approve at any time; until then HELLO gets NOT_APPROVED
-    #    and the watch keeps retrying.
-    # 3. Once approved, HA sends the watch its own command key (MSG_KEY) over
-    #    the encrypted link; every command is signed with it.
+    # ---- pairing = approval ------------------------------------------------
+    # Standard LE Secure Connections pairing with Numeric Comparison: both
+    # sides show the same 6 digits and both must confirm. HA's side of the
+    # confirmation is a discovery card ("Allow Garmin watch X? Code NNNNNN")
+    # that opens the moment the watch asks to pair; HA's agent answers BlueZ
+    # only when the card is submitted (yes) or after APPROVAL_WAIT seconds /
+    # Ignore (no), well inside the 30 s pairing timeout. The watch opens HA on
+    # the phone before it starts pairing, so the card is already on screen.
+    # A completed pairing is the approval: the watch is stored with its own
+    # command key, which it fetches over the encrypted link (MSG_KEY).
     # CMD/EVT need an LE Secure Connections encrypted link (secure-write /
     # secure-notify), so only bonded devices get this far.
 
     async def _save(self) -> None:
-        await self._store.async_save({"approved": self._watches, "pending": self._pending})
+        await self._store.async_save({"approved": self._watches})
 
     @property
     def watches(self) -> dict[str, dict]:
         return dict(self._watches)
 
-    @property
-    def pending(self) -> dict[str, dict]:
-        return dict(self._pending)
-
-    async def bonded(self, device: str, passkey: int) -> None:
-        """A watch completed pairing with this code; it now awaits approval.
-
-        A new bond for an already approved address drops that approval: the
-        address alone proves nothing, only the bond it was approved with does.
-        """
-        addr = _address(device)
-        if self._watches.pop(addr, None) is not None:
-            _LOGGER.warning("approved watch %s paired again; approval required again", addr)
-        self._pending[addr] = {"code": f"{passkey:06d}", "at": int(time.time())}
-        self._flows_started.discard(addr)
-        await self._save()
-        self._ask_approval(addr)
-
     def is_ignored(self, device: str) -> bool:
-        """The user chose Ignore on this watch's approval card (HA keeps an
-        ignored entry for it, removable under Devices & services)."""
+        """The user chose Ignore on this watch's card (HA keeps an ignored
+        entry for it, removable under Devices & services)."""
         uid = f"watch_{_address(device)}"
         return any(e.unique_id == uid and e.source == config_entries.SOURCE_IGNORE
                    for e in self.hass.config_entries.async_entries(DOMAIN))
 
-    async def drop_pending(self, addr: str) -> None:
-        """Remove a watch waiting for approval and its bond."""
-        if self._pending.pop(addr, None) is None:
-            return
-        self._flows_started.discard(addr)
-        self._abort_flows(addr)
-        await self.periph.remove_device(_path(self.periph.adapter_path, addr))
+    async def request_approval(self, device: str, passkey: int) -> bool:
+        """Show the card with this pairing's code; True once it is submitted."""
+        addr = _address(device)
+        code = f"{passkey:06d}"
+        self.reject(addr)  # an older attempt from the same watch is void
+        fut: asyncio.Future[bool] = self.hass.loop.create_future()
+        self._pending[addr] = {"code": code, "future": fut}
+        discovery_flow.async_create_flow(
+            self.hass, DOMAIN,
+            context={"source": config_entries.SOURCE_INTEGRATION_DISCOVERY},
+            data={"entry_id": self._entry_id, "address": addr, "code": code},
+        )
+        try:
+            ok = await asyncio.wait_for(asyncio.shield(fut), APPROVAL_WAIT)
+        except asyncio.TimeoutError:
+            ok = False
+            _LOGGER.info("pairing with %s not confirmed in HA within %ds", addr, APPROVAL_WAIT)
+        finally:
+            if self._pending.get(addr, {}).get("future") is fut:
+                self._pending.pop(addr, None)
+            self._abort_flows(addr)
+        if not ok:
+            return False
+        self._watches[addr] = {"code": code, "at": int(time.time()), "key": os.urandom(16).hex()}
         await self._save()
-        _LOGGER.info("watch %s not approved; bond removed", addr)
+        _LOGGER.info("watch %s paired and approved", addr)
+        async_call_later(self.hass, POST_PAIR_CHECK, callback(lambda _now: self._after_pairing(device)))
+        return True
 
-    async def _expire_pending(self, _now=None) -> None:
-        cutoff = time.time() - PENDING_TTL
-        for addr in [a for a, info in self._pending.items() if info.get("at", 0) < cutoff]:
-            await self.drop_pending(addr)
+    @callback
+    def _after_pairing(self, device: str) -> None:
+        # A watch that paired through its system dialog cannot see the service
+        # on that connection (Fenix 7, Connect IQ secure strategy); dropping
+        # it makes the watch reconnect normally. A watch that already said
+        # HELLO keeps its link.
+        conn = self._conns.get(device)
+        if conn is not None and conn.session is None and not conn.hello:
+            _LOGGER.debug("no HELLO after pairing from %s: reconnecting it", device)
+            self._conns.pop(device, None)
+            self.hass.async_create_task(self.periph.disconnect(device))
+
+    def approve(self, addr: str) -> bool:
+        """The card was submitted: confirm the pairing waiting for it."""
+        info = self._pending.get(addr)
+        if info is None or info["future"].done():
+            return False
+        info["future"].set_result(True)
+        return True
+
+    def reject(self, addr: str | None = None) -> None:
+        """Refuse the pairing waiting for this watch (or all, addr None)."""
+        for a in [addr] if addr is not None else list(self._pending):
+            info = self._pending.pop(a, None)
+            if info is not None and not info["future"].done():
+                info["future"].set_result(False)
+
+    @property
+    def pending(self) -> dict[str, str]:
+        return {a: i["code"] for a, i in self._pending.items()}
 
     @callback
     def _abort_flows(self, addr: str) -> None:
-        """Close the approval card for this watch, if one is open."""
+        """Close the card for this watch, if one is open."""
         flows = getattr(self.hass.config_entries, "flow", None)
         if flows is None:
             return
@@ -178,34 +209,11 @@ class GarminBleServer:
             if flow["context"].get("unique_id") == f"watch_{addr}":
                 flows.async_abort(flow["flow_id"])
 
-    @callback
-    def _ask_approval(self, addr: str) -> None:
-        if addr in self._flows_started:
-            return
-        self._flows_started.add(addr)
-        discovery_flow.async_create_flow(
-            self.hass, DOMAIN,
-            context={"source": config_entries.SOURCE_INTEGRATION_DISCOVERY},
-            data={"entry_id": self._entry_id, "address": addr, "code": self._pending[addr]["code"]},
-        )
-
-    async def approve(self, addr: str) -> bool:
-        info = self._pending.pop(addr, None)
-        if info is None:
-            return False
-        self._watches[addr] = {**info, "key": os.urandom(16).hex()}
-        self._flows_started.discard(addr)
-        await self._save()
-        _LOGGER.info("watch %s approved", addr)
-        return True
-
     async def forget(self, addrs: list[str]) -> None:
-        """Drop watches (approved or pending) and their BlueZ bonds."""
+        """Drop watches and their BlueZ bonds."""
         for addr in addrs:
             self._watches.pop(addr, None)
-            self._pending.pop(addr, None)
-            self._flows_started.discard(addr)
-            self._abort_flows(addr)
+            self.reject(addr)
             await self.periph.remove_device(_path(self.periph.adapter_path, addr))
         await self._save()
 
@@ -276,14 +284,10 @@ class GarminBleServer:
             if len(frame) < 3 or frame[1] != p.PROTOCOL_VERSION:
                 self._send(p.encode_result(0, p.ST_BAD_FRAME))
                 return
+            conn.hello = True
             if addr not in self._watches:
-                if addr in self._pending:
-                    conn.last_seen = time.monotonic()  # the watch waits connected
-                    self._send(p.encode_result(0, p.ST_NOT_APPROVED))
-                    self._ask_approval(addr)
-                else:
-                    _LOGGER.warning("HELLO from %s refused: not paired", device)
-                    self._send(p.encode_result(0, p.ST_NOT_PAIRED))
+                _LOGGER.warning("HELLO from %s refused: not paired", device)
+                self._send(p.encode_result(0, p.ST_NOT_PAIRED))
                 return
             conn.key = bytes.fromhex(self._watches[addr]["key"])
             if not frame[2] & p.HELLO_HAS_KEY:
@@ -379,15 +383,14 @@ class _Pairing(PairingHandler):
 
     async def confirm(self, device: str, passkey: int | None, kind: str) -> bool:
         if passkey is None:
-            # Just Works: no code, so nothing to show for approval
+            # Just Works: no code to compare, so nothing to approve
             _LOGGER.warning("pairing request from %s refused: %s has no code", device, kind)
             return False
         if self._s.is_ignored(device):
             _LOGGER.warning("pairing request from %s refused: ignored in HA", device)
             return False
-        await self._s.bonded(device, passkey)
-        _LOGGER.info("bonded with %s (code %06d), awaiting approval", device, passkey)
-        return True
+        _LOGGER.info("pairing request from %s, code %06d: waiting for HA confirmation", device, passkey)
+        return await self._s.request_approval(device, passkey)
 
     def display(self, device: str, passkey: int) -> None:
         # Passkey Entry with HA displaying (not offered by a Fenix 7): logged only
@@ -395,3 +398,4 @@ class _Pairing(PairingHandler):
 
     def cancel(self) -> None:
         _LOGGER.info("pairing cancelled by BlueZ")
+        self._s.reject()

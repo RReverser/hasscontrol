@@ -145,6 +145,10 @@ module Hass {
     // companion app's homeassistant:// do not work; the My Home Assistant
     // link redirects to the user's own instance. Needs the phone connected
     // to the watch; without it nothing happens and the watch keeps waiting.
+    function openHaOnPhone() {
+      _openApprovalOnPhone();
+    }
+
     hidden function _openApprovalOnPhone() {
       if (_approvalLinkSent) {
         return;

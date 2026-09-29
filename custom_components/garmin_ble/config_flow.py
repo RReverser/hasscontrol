@@ -53,7 +53,7 @@ class GarminBleConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_approve(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         if user_input is not None:
             server = self.hass.data.get(DOMAIN, {}).get(self._watch["entry_id"])
-            if server is None or not await server.approve(self._watch["address"]):
+            if server is None or not server.approve(self._watch["address"]):
                 return self.async_abort(reason="not_pending")
             return self.async_abort(reason="watch_approved")
         return self.async_show_form(
@@ -63,13 +63,13 @@ class GarminBleConfigFlow(ConfigFlow, domain=DOMAIN):
         )
 
     async def async_step_ignore(self, user_input: dict[str, Any]) -> ConfigFlowResult:
-        """Ignore on an approval card: the standard ignored entry, plus the
-        waiting watch and its Bluetooth bond are removed. Further pairing from
-        that address is refused until the entry is un-ignored."""
+        """Ignore on a pairing card: the standard ignored entry; the pairing
+        waiting for it is refused, and so is any later one from that address
+        until the entry is un-ignored."""
         uid = user_input["unique_id"]
         if uid.startswith("watch_"):
             for server in self.hass.data.get(DOMAIN, {}).values():
-                await server.drop_pending(uid[len("watch_"):])
+                server.reject(uid[len("watch_"):])
         return await super().async_step_ignore(user_input)
 
     @staticmethod
@@ -81,7 +81,7 @@ class GarminBleConfigFlow(ConfigFlow, domain=DOMAIN):
 class GarminBleOptionsFlow(OptionsFlow):
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         server = self.hass.data.get(DOMAIN, {}).get(self.config_entry.entry_id)
-        known = sorted({**server.watches, **server.pending}) if server else []
+        known = sorted(server.watches) if server else []
         if user_input is not None:
             forget = user_input.pop(CONF_FORGET, [])
             if forget and server is not None:
@@ -95,5 +95,5 @@ class GarminBleOptionsFlow(OptionsFlow):
         }
         if known:
             schema[vol.Optional(CONF_FORGET, default=[])] = cv.multi_select(
-                {a: f"{a} ({'approved' if a in server.watches else 'waiting for approval'})" for a in known})
+                {a: a for a in known})
         return self.async_show_form(step_id="init", data_schema=vol.Schema(schema))

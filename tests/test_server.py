@@ -203,80 +203,70 @@ async def test_hello_without_key_gets_key(hass_env):
     await hass.async_stop(force=True)
 
 
+async def _pair(server, dev, code, approve_after=None, approve=True):
+    """Run the agent's confirm like BlueZ does; submit the card meanwhile."""
+    task = asyncio.ensure_future(server.periph.pairing.confirm(dev, code, "numeric_comparison"))
+    addr = srv._address(dev)
+    for _ in range(100):
+        if addr in server.pending:
+            break
+        await asyncio.sleep(0.01)
+    if approve_after is not None:
+        await asyncio.sleep(approve_after)
+        if approve:
+            assert server.approve(addr) is True
+        else:
+            server.reject(addr)
+    return await task
+
+
 @pytest.mark.asyncio
-async def test_async_approval(hass_env, monkeypatch):
+async def test_pairing_waits_for_card(hass_env, monkeypatch):
     hass, server, _ = await hass_env()
     flows = []
     monkeypatch.setattr(srv.discovery_flow, "async_create_flow",
                         lambda hass, domain, context, data: flows.append(data))
+    monkeypatch.setattr(srv, "APPROVAL_WAIT", 0.3)
+    monkeypatch.setattr(srv, "POST_PAIR_CHECK", 0.05)
     pairing = server.periph.pairing
     dev = "/org/bluez/hci0/dev_90_F1_57_AB_AA_08"
     addr = "90:F1:57:AB:AA:08"
     # Just Works has no code to compare: refused
     assert await pairing.confirm(dev, None, "just_works") is False
-    # numeric comparison: bond accepted at once, approval asked once
-    assert await pairing.confirm(dev, 654321, "numeric_comparison") is True
-    assert server.pending == {addr: {"code": "654321", "at": server.pending[addr]["at"]}}
-    assert flows == [{"entry_id": "e1", "address": addr, "code": "654321"}]
-    assert not server.is_approved(dev)
-    # not approved yet: HELLO refused, no second flow
-    server._on_device(dev, True)
-    await server._on_write(dev, p.build_hello(has_key=False))
-    assert server.periph.messages() == [p.encode_result(0, p.ST_NOT_APPROVED)]
-    assert len(flows) == 1
-    # approved any time later: key issued on next HELLO
-    assert await server.approve(addr) is True
-    assert await server.approve(addr) is False
-    assert server.is_approved(dev) and addr not in server.pending
+    # card opens with the code; not submitted in time: refused, card closed
+    assert await _pair(server, dev, 111111) is False
+    assert flows[-1] == {"entry_id": "e1", "address": addr, "code": "111111"}
+    assert addr not in server.pending and not server.is_approved(dev)
+    assert server.approve(addr) is False  # late submit does nothing
+    # Ignore / refuse: False
+    assert await _pair(server, dev, 222222, approve_after=0.01, approve=False) is False
+    # submitted: pairing accepted, watch stored with a key
+    assert await _pair(server, dev, 654321, approve_after=0.01) is True
+    assert server.is_approved(dev) and server.watches[addr]["code"] == "654321"
     key = bytes.fromhex(server.watches[addr]["key"])
+    server._on_device(dev, True)
     await server._on_write(dev, p.build_hello(has_key=False))
     msgs = server.periph.messages()
     assert msgs[0] == p.encode_key(key) and msgs[1][0] == p.MSG_CHALLENGE
-    nonce = msgs[1][1:9]
-    await server._on_write(dev, p.build_command(key, nonce, 1, p.OP_LIST))
-    assert server.periph.messages()[-1][0] == p.MSG_LIST_END
-    # new bond for an approved address: approval dropped, asked again
-    assert await pairing.confirm(dev, 111111, "numeric_comparison") is True
-    assert not server.is_approved(dev) and server.pending[addr]["code"] == "111111"
-    assert len(flows) == 2
-    # forget: bond removed, HELLO refused as unpaired
-    await server.forget(["AA", addr])
-    assert server.periph.removed == ["/org/bluez/hci0/dev_AA", "/org/bluez/hci0/dev_90_F1_57_AB_AA_08"]
+    await asyncio.sleep(0.1)
+    assert server.periph.disconnected == []  # said HELLO: link kept
+    # a watch that paired but never said HELLO is reconnected
+    dev2 = "/org/bluez/hci0/dev_11_22"
+    server._on_device(dev2, True)
+    assert await _pair(server, dev2, 42, approve_after=0.01) is True
+    await asyncio.sleep(0.1)
+    await hass.async_block_till_done()
+    assert server.periph.disconnected == [dev2]
+    # forget: bond removed, HELLO refused
+    await server.forget([addr])
+    assert server.periph.removed[-1] == dev
     await server._on_write(dev, p.build_hello())
     assert server.periph.messages() == [p.encode_result(0, p.ST_NOT_PAIRED)]
-    await hass.async_block_till_done()
     await hass.async_stop(force=True)
 
 
 @pytest.mark.asyncio
-async def test_approve_flow(hass_env):
-    from custom_components.garmin_ble.config_flow import GarminBleConfigFlow
-    from custom_components.garmin_ble.const import DOMAIN
-
-    hass, server, _ = await hass_env()
-    hass.data[DOMAIN] = {"e1": server}
-    await server.periph.pairing.confirm("/org/bluez/hci0/dev_11_22", 42, "numeric_comparison")
-
-    def flow():
-        f = GarminBleConfigFlow()
-        f.hass, f.handler, f.flow_id = hass, DOMAIN, "x"
-        f.context = {"source": "integration_discovery"}
-        return f
-
-    f = flow()
-    res = await f.async_step_integration_discovery({"entry_id": "e1", "address": "11:22", "code": "000042"})
-    assert res["type"] == "form" and res["step_id"] == "approve"
-    assert res["description_placeholders"] == {"address": "11:22", "code": "000042"}
-    assert (await f.async_step_approve({}))["reason"] == "watch_approved"
-    assert "11:22" in server.watches
-    f = flow()
-    await f.async_step_integration_discovery({"entry_id": "e1", "address": "11:22", "code": "000042"})
-    assert (await f.async_step_approve({}))["reason"] == "not_pending"
-    await hass.async_stop(force=True)
-
-
-@pytest.mark.asyncio
-async def test_ignore_and_expiry(hass_env, monkeypatch):
+async def test_card_flow_and_ignore(hass_env, monkeypatch):
     from homeassistant import config_entries
     from custom_components.garmin_ble.config_flow import GarminBleConfigFlow
     from custom_components.garmin_ble.const import DOMAIN
@@ -284,29 +274,39 @@ async def test_ignore_and_expiry(hass_env, monkeypatch):
     hass, server, _ = await hass_env()
     hass.data[DOMAIN] = {"e1": server}
     monkeypatch.setattr(srv.discovery_flow, "async_create_flow", lambda *a, **k: None)
-    pairing = server.periph.pairing
-    d0, d1 = "/org/bluez/hci0/dev_11_22", "/org/bluez/hci0/dev_33_44"
-    assert await pairing.confirm(d0, 42, "numeric_comparison") is True
-    assert await pairing.confirm(d1, 43, "numeric_comparison") is True
-    # Ignore: standard ignored entry; waiting watch and bond removed; pairing refused
-    f = GarminBleConfigFlow()
-    f.hass, f.handler, f.flow_id = hass, DOMAIN, "y"
-    f.context = {"source": config_entries.SOURCE_IGNORE}
-    res = await f.async_step_ignore({"unique_id": "watch_11:22", "title": "x"})
+    dev = "/org/bluez/hci0/dev_11_22"
+
+    def flow(source):
+        f = GarminBleConfigFlow()
+        f.hass, f.handler, f.flow_id = hass, DOMAIN, "x"
+        f.context = {"source": source}
+        return f
+
+    task = asyncio.ensure_future(server.periph.pairing.confirm(dev, 42, "numeric_comparison"))
+    for _ in range(100):
+        if "11:22" in server.pending:
+            break
+        await asyncio.sleep(0.01)
+    f = flow("integration_discovery")
+    res = await f.async_step_integration_discovery({"entry_id": "e1", "address": "11:22", "code": "000042"})
+    assert res["step_id"] == "approve" and res["description_placeholders"]["code"] == "000042"
+    assert (await f.async_step_approve({}))["reason"] == "watch_approved"
+    assert await task is True
+    f = flow("integration_discovery")
+    await f.async_step_integration_discovery({"entry_id": "e1", "address": "11:22", "code": "000042"})
+    assert (await f.async_step_approve({}))["reason"] == "not_pending"
+    # Ignore: the waiting pairing is refused, and later ones while ignored
+    task = asyncio.ensure_future(server.periph.pairing.confirm(dev, 43, "numeric_comparison"))
+    await asyncio.sleep(0.05)
+    res = await flow(config_entries.SOURCE_IGNORE).async_step_ignore({"unique_id": "watch_11:22", "title": "x"})
     assert res["type"] == "create_entry"
-    assert "11:22" not in server.pending and server.periph.removed == [d0]
+    assert await task is False
     entry = config_entries.ConfigEntry(
         domain=DOMAIN, source=config_entries.SOURCE_IGNORE, unique_id="watch_11:22", title="x",
         data={}, options={}, version=1, minor_version=1, discovery_keys={}, subentries_data=None)
     hass.config_entries._entries[entry.entry_id] = entry  # what HA does when the flow finishes
-    assert await pairing.confirm(d0, 44, "numeric_comparison") is False
-    # un-ignore (the ignored entry is removed): pairing allowed again
+    assert await server.periph.pairing.confirm(dev, 44, "numeric_comparison") is False
     del hass.config_entries._entries[entry.entry_id]
-    assert await pairing.confirm(d0, 45, "numeric_comparison") is True
-    # expiry after PENDING_TTL
-    server.pending["33:44"]["at"] -= srv.PENDING_TTL + 1
-    await server._expire_pending()
-    assert "33:44" not in server.pending and server.periph.removed[-1] == d1
     await hass.async_stop(force=True)
 
 
