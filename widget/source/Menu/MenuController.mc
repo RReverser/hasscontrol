@@ -71,7 +71,7 @@ class MenuController {
                 {}
             ));
             menu.addItem(new Ui.MenuItem(
-                "Entities&Scenes",
+                "Entities & scenes",
                 "",
                 MenuController.MENU_SWITCH_TO_ENTITIES_SCENES,
                 {}
@@ -101,6 +101,16 @@ class MenuController {
         Ui.pushView(menu, _delegate, Ui.SLIDE_IMMEDIATE);
         }
 
+    function startViewName(view) {
+        if (view.equals(HassControlApp.SCENES_VIEW)) {
+            return "Scenes";
+        }
+        if (view.equals(HassControlApp.ENTITIES_SCENES_VIEW)) {
+            return "Entities & scenes";
+        }
+        return "Entities";
+    }
+
     function showSettingsMenu() {
         var menu = new Ui.Menu2({
             :title => "Settings"
@@ -108,14 +118,14 @@ class MenuController {
 
         menu.addItem(new Ui.MenuItem(
             "Start View",
-            App.getApp().getStartView(),
+            startViewName(App.getApp().getStartView()),
             MenuController.MENU_SELECT_START_VIEW,
             {}
         ));
         addListViewToggle(menu);
         menu.addItem(new Ui.MenuItem(
             "Refresh entities",
-            Hass.getGroup(),
+            Hass.getEntities().size() + " shown",
             MenuController.MENU_REFRESH_ENTITIES,
             {}
         ));
@@ -185,7 +195,7 @@ class MenuController {
         ));
 
         menu.addItem(new Ui.MenuItem(
-            "Entities and Scenes",
+            "Entities & scenes",
             entitiesScenesSubtitle,
             MenuController.MENU_SELECT_START_VIEW_ENTITIES_SCENES,
             {}

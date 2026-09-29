@@ -50,6 +50,7 @@ module Hass {
     hidden var _timerRunning = false;
     hidden var _connectDeadline = null;
     hidden var _statusText = null;
+    hidden var _wasConnected = false; // reached HA during the current wait
     hidden var _approvalLinkSent = false;
     hidden var _retryAt = null;
     hidden var _live = false;      // app in use: keep a session for live states
@@ -105,16 +106,22 @@ module Hass {
       var text = null;
       if (!_ready && _ops.size() > 0) {
         if (state == LINK_REGISTERING || state == LINK_SCANNING || state == LINK_CONNECTING) {
-          text = "Searching";
+          // HA was already reached and the link dropped mid-setup: this is a
+          // reconnect, not a search for an unknown HA
+          text = _wasConnected ? "Connecting" : "Searching";
         } else if (state == LINK_APPROVAL) {
           text = "Approve in HA";
           _openApprovalOnPhone();
         } else if (state == LINK_BONDING || state == LINK_DISCOVERING || state == LINK_ENCRYPTING
                    || state == LINK_SUBSCRIBING || state == LINK_HELLO) {
           text = _link.isPairing() ? "Pairing" : "Connecting";
+          _wasConnected = true;
         } else if (_retryAt != null || _connectDeadline != null) {
-          text = "Searching";  // between attempts of the reconnect loop
+          text = _wasConnected ? "Connecting" : "Searching";  // between attempts
         }
+      }
+      if (text == null) {
+        _wasConnected = false;  // wait over (ready, failed or nothing pending)
       }
       if (text == null ? _statusText == null : text.equals(_statusText)) {
         return;  // same step: no redraw
