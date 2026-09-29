@@ -183,6 +183,9 @@ class HassControlApp extends App.AppBase {
         // loader must stay off - see importEntities()'s comment.
         Hass.importEntities(false);
       } else {
+        // paired, with a cached list: show it at once and connect/refresh in
+        // the background (states update in place); no progress screen
+        Hass.client.setQuiet(true);
         Hass.refreshAllEntities(true);
       }
       Utils.logMem("init:6 refreshStarted", null);

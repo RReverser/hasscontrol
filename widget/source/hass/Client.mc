@@ -50,7 +50,9 @@ module Hass {
     hidden var _timerRunning = false;
     hidden var _connectDeadline = null;
     hidden var _statusText = null;
-    hidden var _wasConnected = false; // reached HA during the current wait
+    hidden var _wasConnected = false;
+    hidden var _quiet = false;        // background refresh: no progress screen
+    hidden var _deferStatus = false;  // re-show progress after leaving quiet mode // reached HA during the current wait
     hidden var _approvalLinkSent = false;
     hidden var _retryAt = null;
     hidden var _live = false;      // app in use: keep a session for live states
@@ -102,9 +104,16 @@ module Hass {
     // Progress text, one step per thing the user can relate to:
     // Searching (finding HA) -> Pairing (only when this link has no bond)
     // or Connecting (bonded) -> Approve in HA (only while HA waits for it).
+    // Startup with a cached list: the list stays on screen while the link
+    // connects and refreshes in the background. Cleared by the session
+    // coming up or by anything the user starts (action, pairing).
+    function setQuiet(quiet) {
+      _quiet = quiet;
+    }
+
     function onLinkStatus(state) {
       var text = null;
-      if (!_ready && _ops.size() > 0) {
+      if (!_ready && _ops.size() > 0 && !_quiet) {
         if (state == LINK_REGISTERING || state == LINK_SCANNING || state == LINK_CONNECTING) {
           // HA was already reached and the link dropped mid-setup: this is a
           // reconnect, not a search for an unknown HA
@@ -228,6 +237,12 @@ module Hass {
 
     hidden function _enqueue(op) {
       _live = true;
+      if (_quiet && op[:k] != :get && op[:k] != :battery) {
+        // the user did something: show where the connection is
+        _quiet = false;
+        _statusText = null;
+        _deferStatus = true;
+      }
       op[:deadline] = System.getTimer() + CONNECT_TIMEOUT_MS + REQUEST_TIMEOUT_MS;
       _ops.add(op);
       if (_ready) {
@@ -237,6 +252,10 @@ module Hass {
           _connectDeadline = System.getTimer() + CONNECT_TIMEOUT_MS;
         }
         _link.start();
+        if (_deferStatus) {
+          _deferStatus = false;
+          onLinkStatus(_link.getState());
+        }
       }
       _ensureTick();
     }
@@ -353,6 +372,7 @@ module Hass {
 
     function onLinkReady(count) {
       _ready = true;
+      _quiet = false;
       _listFresh = false;
       _connectDeadline = null;
       _cache = {};
