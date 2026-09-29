@@ -505,9 +505,15 @@ module Utils {
     }
   }
 
+  // Best effort: Storage.setValue() threw "Illegal Access (Out of Bounds)"
+  // from onStop on a Fenix 7 (crash log 2026-09-29, likely the glance
+  // process, where storage is not writable), so a failure is ignored.
   (:debug)
   function saveLog() {
-    App.Storage.setValue(STORAGE_LOG, _logRing);
+    try {
+      App.Storage.setValue(STORAGE_LOG, _logRing);
+    } catch (e) {
+    }
   }
 
   (:release)
