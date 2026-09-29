@@ -18,6 +18,15 @@ class ProgressDelegate extends Ui.BehaviorDelegate {
     function onHold(clickEvent) {
         return onMenu();
     }
+
+    // unpaired, the app has nothing else to show: Back closes it
+    function onBack() {
+        if (!App.getApp().isLoggedIn()) {
+            App.getApp().exitUnpaired();
+            return true;
+        }
+        return false;
+    }
 }
 
 class ProgressView extends Ui.ProgressBar {

@@ -38,6 +38,7 @@ class MenuDelegate extends Ui.Menu2InputDelegate {
             Ui.popView(Ui.SLIDE_IMMEDIATE);
             Ui.popView(Ui.SLIDE_IMMEDIATE);
             App.getApp().logout();
+            App.getApp().exitUnpaired();
             return true;
         }
         if (itemId == MenuController.MENU_LOGIN) {

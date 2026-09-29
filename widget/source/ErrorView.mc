@@ -26,6 +26,10 @@ class ErrorDelegate extends Ui.BehaviorDelegate {
     }
 
     function onBack() {
+        if (!App.getApp().isLoggedIn()) {
+            App.getApp().exitUnpaired();  // nothing else to show unpaired
+            return true;
+        }
         App.getApp().resetInactivityTimer();
         App.getApp().viewController.removeError();
         return true;

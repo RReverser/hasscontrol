@@ -42,6 +42,13 @@ class EntityCardView extends Ui.View {
   }
 
   function drawNoEntityText(dc) {
+    if (!App.getApp().isLoggedIn()) {
+      // unpaired: pairing starts at once and its progress screen covers this
+      dc.setColor(Graphics.COLOR_BLACK, Graphics.COLOR_BLACK);
+      dc.clear();
+      return;
+    }
+
     var vh = dc.getHeight();
     var vw = dc.getWidth();
 
@@ -71,8 +78,8 @@ class EntityCardView extends Ui.View {
       dc.setColor(Graphics.COLOR_WHITE, Graphics.COLOR_BLACK);
       dc.drawText(cvw, cvh, font, text, Graphics.TEXT_JUSTIFY_CENTER);
     }
-    // Select: pair (unpaired) or fetch the list again; menu
-    Hints.draw(dc, App.getApp().isLoggedIn() ? Hints.RETRY : Hints.OK, Hints.NONE, true);
+    // Select: fetch the list again; menu
+    Hints.draw(dc, Hints.RETRY, Hints.NONE, true);
   }
 
   function drawEntityText(dc, entity) {

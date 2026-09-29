@@ -55,6 +55,15 @@ class HassControlApp extends App.AppBase {
     Ui.requestUpdate();
   }
 
+  // Unpaired the app has nothing to show but pairing: leaving it closes it
+  // (the next start pairs again).
+  function exitUnpaired() {
+    if (Hass.client != null) {
+      Hass.client.shutdown();
+    }
+    System.exit();
+  }
+
   function logout() {
     Hass.client.logout();
     Hass.clearEntities();
