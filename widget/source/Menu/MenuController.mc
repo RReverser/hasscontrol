@@ -125,7 +125,7 @@ class MenuController {
         addListViewToggle(menu);
         menu.addItem(new Ui.MenuItem(
             "Refresh entities",
-            Hass.getEntities().size() + " shown",
+            Hass.getVisibleEntities().size() + " shown",
             MenuController.MENU_REFRESH_ENTITIES,
             {}
         ));

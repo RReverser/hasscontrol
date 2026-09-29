@@ -238,6 +238,7 @@ module Hass {
     hidden var _mType; // Type of entity
     hidden var _mName; // Name
     hidden var _mState; // Current State
+    hidden var _mUnavailable = false;
     hidden var _mExt; // Is this entity loaded from settings?
     hidden var _mSensorValue; // Custom state info text
     hidden var _mSensorClass; // Device class for sensor
@@ -264,6 +265,7 @@ module Hass {
       _mId = entity[:id];
       _mName = entity[:name];
       _mState = Entity.stringToState(entity[:state]);
+      _mUnavailable = entity[:state] instanceof String && entity[:state].equals("unavailable");
       _mExt = entity[:ext] == true;
       _mSensorClass = entity[:sensorClass];
       _mIcon = entity[:icon];
@@ -389,8 +391,15 @@ module Hass {
       return _mType;
     }
 
+    // HA reports the device as unreachable: hidden from the entity views
+    // (still refreshed, so it shows again once HA has it back)
+    function isAvailable() {
+      return !_mUnavailable;
+    }
+
     function setState(newState) {
       if (newState instanceof String) {
+        _mUnavailable = newState.equals("unavailable");
         if (_mType == TYPE_SENSOR || _mType == TYPE_SELECT || _mType == TYPE_INPUT_NUMBER) {
           _mState = STATE_SENSOR;
           _mSensorValue = newState;

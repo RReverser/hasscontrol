@@ -112,10 +112,26 @@ module Hass {
     return _entities;
   }
 
+  // What the entity views show: everything except entities HA reports as
+  // unavailable. Refreshes still walk getEntities(), so a hidden entity
+  // reappears once HA has it back.
+  function getVisibleEntities() {
+    var out = new [0];
+    for (var i = 0; i < _entities.size(); i++) {
+      if (_entities[i].isAvailable()) {
+        out.add(_entities[i]);
+      }
+    }
+    return out;
+  }
+
   function getEntitiesByTypes(types) {
     var entities = new [0];
 
     for (var eI = 0; eI < _entities.size(); eI++) {
+      if (!_entities[eI].isAvailable()) {
+        continue;
+      }
       var match = false;
 
       for (var tI = 0; tI < types.size(); tI++) {

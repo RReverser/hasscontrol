@@ -22,7 +22,7 @@ class EntityListController {
     if (_mTypes != null) {
       _mEntities = Hass.getEntitiesByTypes(_mTypes);
     } else {
-      _mEntities = Hass.getEntities();
+      _mEntities = Hass.getVisibleEntities();
     }
 
     // Ensure index is within valid bounds
