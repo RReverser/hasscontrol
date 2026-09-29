@@ -79,15 +79,13 @@ class HassControlApp extends App.AppBase {
     }
   }
 
-  // Pairing needs the HA page open on the phone first: HA shows the same
-  // 6-digit code there while the watch shows it, and both must confirm
-  // within the 30 s Bluetooth pairing window. So: send the phone a link to
-  // HA's integrations page, and pair once the user says it is open.
+  // Pairing: HA shows the same 6-digit code as the watch on its integrations
+  // page, and both must confirm within the 30 s Bluetooth pairing window.
+  // Garmin Connect's notification on the phone opens that page (once per app
+  // run); if the window is missed, pairing again shows a new card there.
   function login() {
     if (!isLoggedIn()) {
       Hass.client.openHaOnPhone();
-      Ui.pushView(new Ui.Confirmation("HA open on phone?"), new PairPromptDelegate(), Ui.SLIDE_IMMEDIATE);
-      return;
     }
     startPairing();
   }
@@ -269,17 +267,5 @@ class HassControlApp extends App.AppBase {
   // Called when inactivity timer expires
   function onInactivityTimeout() {
     System.exit();
-  }
-}
-class PairPromptDelegate extends Ui.ConfirmationDelegate {
-  function initialize() {
-    ConfirmationDelegate.initialize();
-  }
-
-  function onResponse(response) {
-    if (response == Ui.CONFIRM_YES) {
-      App.getApp().startPairing();
-    }
-    return true;
   }
 }

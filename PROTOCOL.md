@@ -16,7 +16,7 @@ Standard LE Secure Connections pairing with Numeric Comparison; HA's side of
 the comparison is a card in Settings > Devices & services.
 
 1. Unpaired, the watch app sends the phone (via Garmin Connect) a link to
-   HA's integrations page and asks "HA open on phone?". On Yes it pairs.
+   HA's integrations page and starts pairing.
 2. The watch shows the 6-digit code; at the same moment HA opens a card
    "Allow Garmin watch XX:XX:XX:XX:XX:XX? Code NNNNNN". HA's pairing agent
    answers BlueZ only when the card is submitted (accept) or after 25 s or
