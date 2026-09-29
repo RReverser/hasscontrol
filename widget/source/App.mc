@@ -183,10 +183,11 @@ class HassControlApp extends App.AppBase {
         // loader must stay off - see importEntities()'s comment.
         Hass.importEntities(false);
       } else {
-        // paired, with a cached list: show it at once and connect/refresh in
-        // the background (states update in place); no progress screen
+        // paired, with a cached list: show it at once and re-import in the
+        // background (the list follows what HA exposes now: removed entities
+        // go, new ones appear; then states refresh); no progress screen
         Hass.client.setQuiet(true);
-        Hass.refreshAllEntities(true);
+        Hass.importEntities(false);
       }
       Utils.logMem("init:6 refreshStarted", null);
     }
