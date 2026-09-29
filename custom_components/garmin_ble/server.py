@@ -353,11 +353,13 @@ class GarminBleServer:
             data["option"] = opts[arg[0]]
         elif action == p.ACT_SET_VALUE:
             data["value"] = p.unpack_float(arg)
+        t0 = time.monotonic()
         try:
             await self.hass.services.async_call(domain, service, data, blocking=True)
         except (HomeAssistantError, ValueError) as err:
             _LOGGER.warning("%s.%s on %s failed: %s", domain, service, eid, err)
             return p.ST_SERVICE_ERROR
+        _LOGGER.debug("%s.%s on %s took %.0f ms", domain, service, eid, (time.monotonic() - t0) * 1000)
         return p.ST_OK
 
 

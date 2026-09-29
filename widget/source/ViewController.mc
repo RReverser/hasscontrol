@@ -1,10 +1,13 @@
 using Toybox.WatchUi as Ui;
+using Toybox.System;
 using Toybox.Application as App;
 using Toybox.Timer;
 using Toybox.Time;
 
 using Hass;
 using Utils;
+
+const LOADER_MIN_MS = 300;
 
 class ViewController {
   hidden var _currentView;
@@ -255,7 +258,7 @@ class ViewController {
 
     Ui.pushView(_loaderView, new ProgressDelegate(), Ui.SLIDE_BLINK);
 
-    _loaderActive = Time.now();
+    _loaderActive = System.getTimer();
 
     Ui.requestUpdate();
   }
@@ -263,9 +266,13 @@ class ViewController {
 
   function removeLoader() {
     if (isShowingLoader()) {
-      // if loader is about to close too soon, we need to delay it
-      if (Time.now().add(new Time.Duration(-1)).lessThan(_loaderActive)) {
-        _loaderTimer.start(method(:removeLoader), 500, false);
+      // keep it up at least LOADER_MIN_MS so it does not just flash.
+      // (Was: at least one whole wall-clock second via Time.now(), whose
+      // 1 s resolution plus a 500 ms re-check kept it up to ~2.5 s after
+      // the action had already finished.)
+      var left = LOADER_MIN_MS - (System.getTimer() - _loaderActive);
+      if (left > 0) {
+        _loaderTimer.start(method(:removeLoader), left, false);
         return;
       }
 

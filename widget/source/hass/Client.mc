@@ -272,6 +272,8 @@ module Hass {
         } else if (op[:arg] != null) {
           payload.addAll(op[:arg]);
         }
+        op[:sentAt] = System.getTimer();
+        Utils.debugLog("BLE: action sent", null, null);
         _await(_link.send(OP_ACTION, payload), op);
       } else if (k == :battery) {
         _await(_link.send(OP_BATTERY, op[:arg]), op);
@@ -329,7 +331,8 @@ module Hass {
     }
 
     hidden function _await(ctr8, op) {
-      _pendingCtr[ctr8] = { :cb => op[:cb], :data => op[:data], :deadline => System.getTimer() + REQUEST_TIMEOUT_MS };
+      _pendingCtr[ctr8] = { :cb => op[:cb], :data => op[:data], :sentAt => op[:sentAt],
+                            :deadline => System.getTimer() + REQUEST_TIMEOUT_MS };
     }
 
     hidden function _optionIndex(id, option) {
@@ -406,6 +409,9 @@ module Hass {
         var p = _pendingCtr[msg[1]];
         if (p != null) {
           _pendingCtr.remove(msg[1]);
+          if (p[:sentAt] != null) {
+            Utils.debugLog("BLE: result ms=", System.getTimer() - p[:sentAt], " status=" + msg[2]);
+          }
           if (msg[2] == ST_OK) {
             _defer(p[:cb], null, p[:data]);
           } else {
