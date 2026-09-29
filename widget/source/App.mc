@@ -136,7 +136,13 @@ class HassControlApp extends App.AppBase {
     if (Hass.client != null) {
       Hass.client.shutdown();
     }
-    Utils.saveLog();
+    // Only the full app writes the log: the glance process never built a
+    // view controller, and Storage.setValue() from onStop crashed a Fenix 7
+    // with "Illegal Access (Out of Bounds)", a system error that try/catch
+    // does not catch.
+    if (viewController != null) {
+      Utils.saveLog();
+    }
   }
 
   function getGlanceView() {
