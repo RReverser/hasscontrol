@@ -11,7 +11,7 @@
         }
       },
       "approve": {
-        "title": "Garmin watch {address}",
+        "title": "Pair Garmin watch",
         "description": "Code: **{code}**\n\nSubmit only if your watch shows the same code, then confirm on the watch too. The watch can then control the entities you exposed."
       }
     },
@@ -21,7 +21,7 @@
       "watch_paired": "Watch paired.",
       "pairing_failed": "Pairing did not complete (declined or timed out on the watch). Pair again from the watch."
     },
-    "flow_title": "Garmin watch · code {code}",
+    "flow_title": "Code {code}",
     "progress": {
       "confirm_on_watch": "Now confirm the code on the watch."
     }
