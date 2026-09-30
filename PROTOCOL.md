@@ -53,8 +53,9 @@ central, so the watch never advertises anything HA could connect to.
 | CMD characteristic (watch to HA) | `6a1e0002-4c7d-4b4e-9a2b-3c8f1d2e5a01` | write (with response), encrypted + authenticated link required |
 | EVT characteristic (HA to watch) | `6a1e0003-4c7d-4b4e-9a2b-3c8f1d2e5a01` | notify, encrypted + authenticated link required to subscribe |
 
-The advertisement carries the 128-bit service UUID; the local name `HA-Watch`
-goes in the scan response. The characteristics need a bonded, encrypted link
+The advertisement carries only the 128-bit service UUID (no name, so HA does
+not appear by name in other devices' Bluetooth lists); the watch finds HA by
+that UUID. The characteristics need a bonded, encrypted link
 (see above); the application-layer MAC below additionally binds every command
 to the per-watch key and the session.
 

@@ -19,7 +19,6 @@ _LOGGER = logging.getLogger(__name__)
 SVC_UUID = "6a1e0001-4c7d-4b4e-9a2b-3c8f1d2e5a01"
 CMD_UUID = "6a1e0002-4c7d-4b4e-9a2b-3c8f1d2e5a01"
 EVT_UUID = "6a1e0003-4c7d-4b4e-9a2b-3c8f1d2e5a01"
-LOCAL_NAME = "HA-Watch"
 ADV_MIN_INTERVAL_MS = 60
 ADV_MAX_INTERVAL_MS = 100
 
@@ -115,9 +114,9 @@ class _Advertisement(ServiceInterface):
     def ServiceUUIDs(self) -> "as":  # noqa: N802
         return [SVC_UUID]
 
-    @dbus_property(access=PropertyAccess.READ)
-    def LocalName(self) -> "s":  # noqa: N802
-        return LOCAL_NAME
+    # No LocalName: the watch finds HA by the service UUID alone, and without
+    # a name HA does not show up as "HA-Watch" in other devices' Bluetooth
+    # lists.
 
     # Advertising interval in ms. The kernel default is 1.28 s, against which
     # a Connect IQ central (simulator + nRF52 dongle) needed ~9-11 s per
