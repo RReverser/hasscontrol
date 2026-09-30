@@ -1,6 +1,7 @@
 """Config flow: adapter and exposure label; approval of paired watches."""
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import voluptuous as vol
@@ -27,6 +28,8 @@ class GarminBleConfigFlow(ConfigFlow, domain=DOMAIN):
 
     def __init__(self) -> None:
         self._watch: dict[str, Any] = {}
+        self._outcome = None       # future: did the pairing complete?
+        self._wait_task = None
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         if user_input is not None:
@@ -47,20 +50,49 @@ class GarminBleConfigFlow(ConfigFlow, domain=DOMAIN):
         await self.async_set_unique_id(f"watch_{discovery_info['address']}")
         self._abort_if_unique_id_configured()
         self._watch = discovery_info
-        self.context["title_placeholders"] = {"address": discovery_info["address"]}
+        # the code on the discovered card itself, to compare at a glance
+        self.context["title_placeholders"] = {"address": discovery_info["address"],
+                                              "code": discovery_info["code"]}
         return await self.async_step_approve()
 
     async def async_step_approve(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        if self._wait_task is not None:
+            return await self.async_step_confirm_on_watch()
         if user_input is not None:
             server = self.hass.data.get(DOMAIN, {}).get(self._watch["entry_id"])
-            if server is None or not server.approve(self._watch["address"]):
+            self._outcome = server.approve(self._watch["address"]) if server else None
+            if self._outcome is None:
                 return self.async_abort(reason="not_pending")
-            return self.async_abort(reason="watch_approved")
+            return await self.async_step_confirm_on_watch()
         return self.async_show_form(
             step_id="approve",
             data_schema=vol.Schema({}),
             description_placeholders={"address": self._watch["address"], "code": self._watch["code"]},
         )
+
+    async def async_step_confirm_on_watch(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """HA said yes: wait (progress spinner) until the watch confirms too."""
+        if self._wait_task is None:
+            outcome = self._outcome
+
+            async def _wait() -> bool:
+                return await asyncio.shield(outcome)
+
+            self._wait_task = self.hass.async_create_task(_wait())
+        if not self._wait_task.done():
+            return self.async_show_progress(
+                step_id="confirm_on_watch",
+                progress_action="confirm_on_watch",
+                progress_task=self._wait_task,
+            )
+        paired = self._wait_task.result()
+        return self.async_show_progress_done(next_step_id="paired" if paired else "failed")
+
+    async def async_step_paired(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        return self.async_abort(reason="watch_paired")
+
+    async def async_step_failed(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        return self.async_abort(reason="pairing_failed")
 
     async def async_step_ignore(self, user_input: dict[str, Any]) -> ConfigFlowResult:
         """Ignore on a pairing card: the standard ignored entry; the pairing

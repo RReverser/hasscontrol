@@ -214,7 +214,7 @@ async def _pair(server, dev, code, approve_after=None, approve=True):
     if approve_after is not None:
         await asyncio.sleep(approve_after)
         if approve:
-            assert server.approve(addr) is True
+            assert server.approve(addr) is not None
         else:
             server.reject(addr)
     return await task
@@ -239,7 +239,7 @@ async def test_pairing_waits_for_card(hass_env, monkeypatch):
     assert await task is False
     assert flows[-1] == {"entry_id": "e1", "address": addr, "code": "111111"}
     assert addr not in server.pending and not server.is_approved(dev)
-    assert server.approve(addr) is False  # late submit does nothing
+    assert server.approve(addr) is None  # late submit does nothing
     # BlueZ cancels (Agent1.Cancel): refused
     task = asyncio.ensure_future(pairing.confirm(dev, 333333, "numeric_comparison"))
     await asyncio.sleep(0.05)
@@ -247,18 +247,32 @@ async def test_pairing_waits_for_card(hass_env, monkeypatch):
     assert await task is False
     # Ignore / refuse: False
     assert await _pair(server, dev, 222222, approve_after=0.01, approve=False) is False
-    # submitted: pairing accepted, watch stored with a key
-    assert await _pair(server, dev, 654321, approve_after=0.01) is True
+    # submitted in HA, then the watch declines: nothing stored, card told
+    task = asyncio.ensure_future(pairing.confirm(dev, 555555, "numeric_comparison"))
+    await asyncio.sleep(0.05)
+    outcome = server.approve(addr)
+    assert await task is True  # HA's side of the comparison is yes
+    server._on_device(dev, False)  # watch declined: link drops
+    assert await outcome is False and not server.is_approved(dev)
+    # submitted, and the watch confirms (BlueZ: Paired): stored with a key,
+    # card told, link dropped so the watch reconnects bonded
+    task = asyncio.ensure_future(pairing.confirm(dev, 654321, "numeric_comparison"))
+    await asyncio.sleep(0.05)
+    outcome = server.approve(addr)
+    assert await task is True
+    assert not server.is_approved(dev)  # not before the pairing completes
+    pairing.paired(dev)
+    assert await outcome is True
+    await hass.async_block_till_done()
+    assert server.periph.disconnected == [dev]
     assert server.is_approved(dev) and server.watches[addr]["code"] == "654321"
     key = bytes.fromhex(server.watches[addr]["key"])
     server._on_device(dev, True)
     await server._on_write(dev, p.build_hello(has_key=False))
     msgs = server.periph.messages()
     assert msgs[0] == p.encode_key(key) and msgs[1][0] == p.MSG_CHALLENGE
-    # BlueZ reports the pairing complete: the link is dropped so the watch
-    # reconnects as a bonded device; not for devices HA did not approve
+    # a pairing HA did not confirm changes nothing
     pairing.paired("/org/bluez/hci0/dev_11_22")
-    pairing.paired(dev)
     await hass.async_block_till_done()
     assert server.periph.disconnected == [dev]
     # forget: bond removed, HELLO refused
@@ -294,8 +308,15 @@ async def test_card_flow_and_ignore(hass_env, monkeypatch):
     f = flow("integration_discovery")
     res = await f.async_step_integration_discovery({"entry_id": "e1", "address": "11:22", "code": "000042"})
     assert res["step_id"] == "approve" and res["description_placeholders"]["code"] == "000042"
-    assert (await f.async_step_approve({}))["reason"] == "watch_approved"
+    assert f.context["title_placeholders"] == {"address": "11:22", "code": "000042"}
+    res = await f.async_step_approve({})
+    assert res["type"] == "progress" and res["progress_action"] == "confirm_on_watch"
     assert await task is True
+    server.paired("/org/bluez/hci0/dev_11_22")
+    await f._wait_task
+    res = await f.async_step_confirm_on_watch()
+    assert res["type"] == "progress_done" and res["step_id"] == "paired"
+    assert (await f.async_step_paired())["reason"] == "watch_paired"
     f = flow("integration_discovery")
     await f.async_step_integration_discovery({"entry_id": "e1", "address": "11:22", "code": "000042"})
     assert (await f.async_step_approve({}))["reason"] == "not_pending"

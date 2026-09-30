@@ -138,56 +138,69 @@ class GarminBleServer:
         code = f"{passkey:06d}"
         self.reject(addr)  # an older attempt from the same watch is void
         fut: asyncio.Future[bool] = self.hass.loop.create_future()
-        self._pending[addr] = {"code": code, "future": fut}
+        self._pending[addr] = {"code": code, "future": fut,
+                               "outcome": self.hass.loop.create_future()}
         discovery_flow.async_create_flow(
             self.hass, DOMAIN,
             context={"source": config_entries.SOURCE_INTEGRATION_DISCOVERY},
             data={"entry_id": self._entry_id, "address": addr, "code": code},
         )
-        try:
-            # no timer of our own: the attempt ends when the card is submitted
-            # or ignored, when the watch disconnects (cancelled or timed out on
-            # its side), or when BlueZ cancels the request (Agent1.Cancel;
-            # BlueZ also gives up on an agent after 60 s)
-            ok = await fut
-        finally:
+        # no timer of our own: the attempt ends when the card is submitted
+        # or ignored, when the watch disconnects (cancelled or timed out on
+        # its side), or when BlueZ cancels the request (Agent1.Cancel; BlueZ
+        # also gives up on an agent after 60 s)
+        ok = await fut
+        if not ok:
             if self._pending.get(addr, {}).get("future") is fut:
                 self._pending.pop(addr, None)
             self._abort_flows(addr)
-        if not ok:
             return False
-        self._watches[addr] = {"code": code, "at": int(time.time()), "key": os.urandom(16).hex()}
-        await self._save()
-        _LOGGER.info("watch %s paired and approved", addr)
+        # HA said yes; the pairing completes once the watch confirms too
+        # (paired()), or fails if the link goes down first (reject())
+        _LOGGER.info("pairing with %s confirmed in HA, waiting for the watch", addr)
         return True
 
     @callback
     def paired(self, device: str) -> None:
-        """BlueZ finished pairing a watch approved on its card: drop that
-        link so the watch reconnects as a bonded device. A watch that paired
-        through its system dialog (Connect IQ secure strategy) cannot see the
-        service on that connection (Fenix 7), and a reconnect costs the other
-        path only a few seconds."""
-        if not self.is_approved(device):
+        """BlueZ finished a pairing HA confirmed: store the watch, tell its
+        card, and drop the link so the watch reconnects as a bonded device.
+        A watch that paired through its system dialog (Connect IQ secure
+        strategy) cannot see the service on that connection (Fenix 7), and a
+        reconnect costs the other path only a few seconds."""
+        addr = _address(device)
+        info = self._pending.get(addr)
+        if info is None or not info["future"].done() or not info["future"].result():
             return
-        _LOGGER.debug("paired %s: reconnecting it", device)
+        self._pending.pop(addr, None)
+        self._watches[addr] = {"code": info["code"], "at": int(time.time()),
+                               "key": os.urandom(16).hex()}
+        self.hass.async_create_task(self._save())
+        _LOGGER.info("watch %s paired", addr)
+        if not info["outcome"].done():
+            info["outcome"].set_result(True)
         self._conns.pop(device, None)
         self.hass.async_create_task(self.periph.disconnect(device))
 
-    def approve(self, addr: str) -> bool:
-        """The card was submitted: confirm the pairing waiting for it."""
+    def approve(self, addr: str) -> asyncio.Future | None:
+        """The card was submitted: confirm the pairing waiting for it.
+        Returns a future telling whether the pairing then completed."""
         info = self._pending.get(addr)
         if info is None or info["future"].done():
-            return False
+            return None
         info["future"].set_result(True)
-        return True
+        return info["outcome"]
 
     def reject(self, addr: str | None = None) -> None:
-        """Refuse the pairing waiting for this watch (or all, addr None)."""
+        """End the pairing of this watch (or all, addr None) as failed:
+        refused if HA was still asked, failed if the watch was confirming."""
         for a in [addr] if addr is not None else list(self._pending):
             info = self._pending.pop(a, None)
-            if info is not None and not info["future"].done():
+            if info is None:
+                continue
+            if not info["future"].done():
                 info["future"].set_result(False)
+            if not info["outcome"].done():
+                info["outcome"].set_result(False)
 
     @property
     def pending(self) -> dict[str, str]:
